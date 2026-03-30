@@ -16,6 +16,7 @@ import {
     EmptyState,
     LoadingState
 } from '../components/ui';
+import { SecureImage } from '../components/ui/SecureImage';
 import { supabase } from '../lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -438,8 +439,16 @@ function MemberRowItem({ m, isSelected, onToggle, onEdit, onResendInvite, onDele
             </td>
             <td className="px-8 py-6">
                 <div className="flex items-center gap-5">
-                    <div className="w-12 h-12 rounded-2xl bg-primary/5 border border-primary/10 flex items-center justify-center text-primary text-sm font-bold shadow-sm group-hover/row:scale-105 transition-transform duration-300">
-                        {initials || <Users className="w-5 h-5" />}
+                    <div className="w-12 h-12 rounded-2xl bg-primary/5 border border-primary/10 flex items-center justify-center text-primary text-sm font-bold shadow-sm group-hover/row:scale-105 transition-transform duration-300 overflow-hidden">
+                        {m.avatar_url ? (
+                            <SecureImage 
+                                path={m.avatar_url} 
+                                bucket="avatars" 
+                                className="w-full h-full object-cover" 
+                            />
+                        ) : (
+                            initials || <Users className="w-5 h-5" />
+                        )}
                     </div>
                     <div className="min-w-0">
                         <span onClick={onEdit} className="text-sm font-bold text-text-primary hover:text-primary cursor-pointer block tracking-tight transition-colors leading-none mb-1.5 truncate">

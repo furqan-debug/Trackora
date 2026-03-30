@@ -36,6 +36,7 @@ interface User {
   tracking_enabled?: boolean;
   avatar_url?: string;
   phone?: string;
+  organization_id?: string;
 }
 
 interface Project {
@@ -60,6 +61,37 @@ interface Todo {
   assignee_id?: string;
   projectName?: string;
   projectColor?: string;
+}
+
+// ── Signed Image Component ──────────────────────────────────────────────────
+function SignedImage({ path, bucket, className, alt = "" }: { path: string; bucket: string; className?: string; alt?: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!path) return;
+    if (path.startsWith('http')) {
+      setUrl(path);
+      return;
+    }
+
+    let isMounted = true;
+    const fetchUrl = async () => {
+      try {
+        const sb = await getSupabase();
+        const { data, error } = await sb.storage.from(bucket).createSignedUrl(path, 3600);
+        if (error) throw error;
+        if (isMounted) setUrl(data.signedUrl);
+      } catch (err) {
+        console.error('Error fetching signed URL:', err);
+      }
+    };
+
+    fetchUrl();
+    return () => { isMounted = false; };
+  }, [path, bucket]);
+
+  if (!url) return <div className={className} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f0f0' }}>...</div>;
+  return <img src={url} alt={alt} className={className} />;
 }
 
 const TOKEN_KEY = 'digireps_token';
@@ -120,8 +152,8 @@ function SettingsScreen({ user, onSave, onBack }: {
     try {
       const sb = await getSupabase();
       const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `${fileName}`;
+      const fileName = `${Date.now()}.${fileExt}`;
+      const filePath = `${user.organization_id}/${user.id}/${fileName}`;
 
       const { error: uploadError } = await sb.storage
         .from('avatars')
@@ -129,11 +161,7 @@ function SettingsScreen({ user, onSave, onBack }: {
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = sb.storage
-        .from('avatars')
-        .getPublicUrl(filePath);
-
-      setAvatarUrl(publicUrl);
+      setAvatarUrl(filePath);
     } catch (err: any) {
       alert('Error uploading file: ' + err.message);
     } finally {
@@ -158,7 +186,7 @@ function SettingsScreen({ user, onSave, onBack }: {
         <div className="avatar-section">
           <div className="avatar-preview-container">
             {avatarUrl ? (
-              <img src={avatarUrl} alt="Avatar" className="avatar-preview-large" />
+              <SignedImage path={avatarUrl} bucket="avatars" className="avatar-preview-large" />
             ) : (
               <div className="avatar-placeholder-large">
                 <UserIcon size={32} />
@@ -343,7 +371,9 @@ export default function App() {
           daily_limit: member.daily_limit,
           idle_limit: member.idle_limit,
           idle_enabled: member.idle_enabled,
-          tracking_enabled: member.tracking_enabled
+          tracking_enabled: member.tracking_enabled,
+          avatar_url: member.avatar_url,
+          organization_id: member.organization_id
         };
         console.log('USER LOADED (Session):', userObj);
         setUser(userObj);
@@ -531,7 +561,9 @@ export default function App() {
         daily_limit: member.daily_limit,
         idle_limit: member.idle_limit,
         idle_enabled: member.idle_enabled,
-        tracking_enabled: member.tracking_enabled
+        tracking_enabled: member.tracking_enabled,
+        avatar_url: member.avatar_url,
+        organization_id: member.organization_id
       };
       const { data: projectsData } = await sb.from('projects').select('*');
       const token = authData.session.access_token;
@@ -924,7 +956,11 @@ function Topbar({ user, onLogout, onSettings, todoBadge }: { user?: User; onLogo
             </div>
           )}
           <div className="user-avatar" onClick={onSettings} style={{ cursor: onSettings ? 'pointer' : 'default', overflow: 'hidden' }}>
-            {user.avatar_url ? <img src={user.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials}
+            <div className="user-avatar-wrap">
+              {user.avatar_url ? (
+                <SignedImage path={user.avatar_url} bucket="avatars" className="user-avatar-img" />
+              ) : initials}
+            </div>
           </div>
           <button onClick={onLogout} className="btn btn-ghost" title="Sign out" style={{ padding: '0.3rem' }}>
             <LogOut size={16} />
