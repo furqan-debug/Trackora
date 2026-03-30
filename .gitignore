@@ -1,0 +1,38 @@
+# Trackora Specific
+.temp/
+*.log
+*.txt
+*.json
+!package.json
+!package-lock.json
+!tsconfig*.json
+!tauri.conf.json
+!latest.json
+!railway.toml
+!vercel.json
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Build Artifacts
+node_modules/
+dist/
+dist-ssr/
+src-tauri/target/
+src-tauri/bin/
+bin/
+*.exe
+*.msi
+
+# Editor and System
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
