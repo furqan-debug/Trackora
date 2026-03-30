@@ -47,7 +47,7 @@ export function MemberFormPage() {
     const [email, setEmail] = useState('');
     
     // Missing Fields State
-    const [computerUsername, setComputerUsername] = useState('');
+    const [osUsername, setOsUsername] = useState('');
     const [birthday, setBirthday] = useState('');
     const [hireDate, setHireDate] = useState('');
     const [terminationDate, setTerminationDate] = useState('');
@@ -60,9 +60,9 @@ export function MemberFormPage() {
     const [emergencyContact, setEmergencyContact] = useState('');
     const [skillsNotes, setSkillsNotes] = useState('');
     const [nickname, setNickname] = useState('');
-    const [idleDetection, setIdleDetection] = useState(false);
-    const [idleTimeout, setIdleTimeout] = useState('5');
-    const [enableTracking, setEnableTracking] = useState(true);
+    const [idleEnabled, setIdleEnabled] = useState(true);
+    const [idleLimit, setIdleLimit] = useState('10');
+    const [trackingEnabled, setTrackingEnabled] = useState(true);
 
     useEffect(() => {
         if (id) loadMember();
@@ -91,7 +91,7 @@ export function MemberFormPage() {
                 setEmail(data.email || '');
                 
                 // Load Restored Fields
-                setComputerUsername(data.computer_username || '');
+                setOsUsername(data.os_username || '');
                 setBirthday(data.birthday || '');
                 setHireDate(data.hire_date || '');
                 setTerminationDate(data.termination_date || '');
@@ -104,9 +104,9 @@ export function MemberFormPage() {
                 setEmergencyContact(data.emergency_contact || '');
                 setSkillsNotes(data.skills_notes || '');
                 setNickname(data.nickname || '');
-                setIdleDetection(data.idle_detection ?? false);
-                setIdleTimeout(data.idle_timeout?.toString() || '5');
-                setEnableTracking(data.enable_tracking ?? true);
+                setIdleEnabled(data.idle_enabled ?? true);
+                setIdleLimit(data.idle_limit?.toString() || '10');
+                setTrackingEnabled(data.tracking_enabled ?? true);
             }
         } catch (err: any) {
             setError(err.message);
@@ -132,7 +132,7 @@ export function MemberFormPage() {
                 timezone,
                 
                 // Save Restored Fields
-                computer_username: computerUsername,
+                os_username: osUsername,
                 birthday: birthday || null,
                 hire_date: hireDate || null,
                 termination_date: terminationDate || null,
@@ -145,9 +145,9 @@ export function MemberFormPage() {
                 emergency_contact: emergencyContact,
                 skills_notes: skillsNotes,
                 nickname: nickname,
-                idle_detection: idleDetection,
-                idle_timeout: parseInt(idleTimeout) || 5,
-                enable_tracking: enableTracking,
+                idle_enabled: idleEnabled,
+                idle_limit: parseInt(idleLimit) || 10,
+                tracking_enabled: trackingEnabled,
             };
 
             const { error: sError } = await supabase
@@ -387,15 +387,15 @@ export function MemberFormPage() {
                                             <p className="text-[11px] text-text-muted font-medium mt-1">Enable desktop activity monitoring for this resource</p>
                                         </div>
                                         <button
-                                            onClick={() => setEnableTracking(!enableTracking)}
+                                            onClick={() => setTrackingEnabled(!trackingEnabled)}
                                             className={clsx(
                                                 "relative w-12 h-6 rounded-full transition-all duration-300",
-                                                enableTracking ? 'bg-primary' : 'bg-border'
+                                                trackingEnabled ? 'bg-primary' : 'bg-border'
                                             )}
                                         >
                                             <div className={clsx(
                                                 "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                                                enableTracking ? 'left-7' : 'left-1'
+                                                trackingEnabled ? 'left-7' : 'left-1'
                                             )} />
                                         </button>
                                     </div>
@@ -406,28 +406,28 @@ export function MemberFormPage() {
                                             <p className="text-[11px] text-text-muted font-medium mt-1">Automatically stop timer when inactivity is detected</p>
                                         </div>
                                         <button
-                                            onClick={() => setIdleDetection(!idleDetection)}
+                                            onClick={() => setIdleEnabled(!idleEnabled)}
                                             className={clsx(
                                                 "relative w-12 h-6 rounded-full transition-all duration-300",
-                                                idleDetection ? 'bg-primary' : 'bg-border'
+                                                idleEnabled ? 'bg-primary' : 'bg-border'
                                             )}
                                         >
                                             <div className={clsx(
                                                 "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                                                idleDetection ? 'left-7' : 'left-1'
+                                                idleEnabled ? 'left-7' : 'left-1'
                                             )} />
                                         </button>
                                     </div>
 
-                                    {idleDetection && (
+                                    {idleEnabled && (
                                         <div className="animate-in slide-in-from-top-4 duration-300">
                                             <FormField
                                                 label="Idle Threshold (Minutes)"
-                                                value={idleTimeout}
-                                                onChange={setIdleTimeout}
+                                                value={idleLimit}
+                                                onChange={setIdleLimit}
                                                 type="number"
                                                 icon={<Clock className="w-4 h-4" />}
-                                                placeholder="5"
+                                                placeholder="10"
                                             />
                                         </div>
                                     )}
@@ -472,8 +472,8 @@ export function MemberFormPage() {
                                 />
                                 <FormField
                                     label="Workstation OS Username"
-                                    value={computerUsername}
-                                    onChange={setComputerUsername}
+                                    value={osUsername}
+                                    onChange={setOsUsername}
                                     icon={<User className="w-4 h-4" />}
                                     placeholder="e.g. furqan_s..."
                                 />
