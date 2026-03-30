@@ -1,0 +1,11 @@
+{
+  "version": "1.0.4",
+  "notes": "Trackora v1.0.4 - Performance Improvements & UI Restoration",
+  "pub_date": "2026-03-30T15:05:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUcGZIa3dzSit3anl3aU03ZnRWeHdMOHpTaHMvZDQxMXBTbVQ5KzFIU0YxbmRJQzNkeGNNYzh1by9HWnBkVG0wWkttTzJvSmhQcmlaQmd2Q2svazVTSyt0ZkcvMHB3d3dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc0ODgzMDQzCWZpbGU6VHJhY2tvcmFfMS4wLjRfeDY0LXNldHVwLmV4ZQpUc2xWQjk3c0hpL0xUZ3lDbEdjU2FNeEFQVjZGQzUzU3dRdVBpZ2FHeXVZWCtGRXByUXFoOC9TTGRTdlBGNjRINFNQL0dmVWdPTTVsRTNLdE9OWitEQT09Cg==",
+      "url": "https://github.com/furqan-debug/Trackora/releases/download/v1.0.4/Trackora_1.0.4_x64-setup.exe"
+    }
+  }
+}

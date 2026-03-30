@@ -16,6 +16,13 @@
 .env.*
 !.env.example
 
+# Security & Secrets
+*.key
+*.pub
+signing.key
+myapp.key
+~/.tauri/
+
 # Build Artifacts
 node_modules/
 dist/

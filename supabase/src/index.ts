@@ -44,7 +44,7 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     console.warn('⚠️  SUPABASE_URL or SUPABASE_SERVICE_KEY is not set. DB writes will be skipped.');
-    console.warn('    → Copy backend/.env.example to backend/.env and fill in your credentials.');
+    console.warn('    → Copy supabase/.env.example to supabase/.env and fill in your credentials.');
 }
 
 // Service-role client: for DB writes (bypasses RLS)
