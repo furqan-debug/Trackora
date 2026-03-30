@@ -5,11 +5,13 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Card } from '../components/ui/Card';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 type Step = 'loading' | 'form' | 'success' | 'error';
 
 export function AcceptInvite() {
     const navigate = useNavigate();
+    const { refreshProfile } = useAuth();
     const [step, setStep] = useState<Step>('loading');
     const [errorMsg, setErrorMsg] = useState('');
 
@@ -92,6 +94,9 @@ export function AcceptInvite() {
             if (!response.ok) {
                 throw new Error(result?.error || `Server error: ${response.status}`);
             }
+
+            // REFRESH THE PROFILE IN AUTH CONTEXT BEFORE NAVIGATING
+            await refreshProfile();
 
             if (result.member?.role) {
                 setRole(result.member.role);

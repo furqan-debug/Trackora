@@ -121,7 +121,10 @@ export function People() {
                 body: JSON.stringify({
                     email: addEmail.trim().toLowerCase(),
                     role: addRole,
-                    pay_rate: addEmail.trim() === 'furqanfreelancer1@gmail.com' ? 0 : (addPayRate ? parseFloat(addPayRate) : null), // Temp safety
+                    pay_rate: addPayRate ? parseFloat(addPayRate) : 0,
+                    bill_rate: addBillRate ? parseFloat(addBillRate) : 0,
+                    weekly_limit: parseInt(addWeekly) || 40,
+                    daily_limit: parseInt(addDaily) || 8,
                     admin_portal_url: window.location.origin
                 })
             });
