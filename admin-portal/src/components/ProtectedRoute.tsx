@@ -48,7 +48,6 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
     }
 
     // 4. Force Onboarding IF profile exists but NO organization_id is assigned.
-    // If they have an organization_id but status is 'Pending', they are invited users and should be allowed to proceed.
     if (profile && !profile.organization_id && location.pathname !== '/onboarding') {
         return <Navigate to="/onboarding" replace />;
     }

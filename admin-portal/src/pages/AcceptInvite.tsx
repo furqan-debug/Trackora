@@ -73,23 +73,21 @@ export function AcceptInvite() {
             // 3. Update profile via Edge Function
             console.log('--- ACTIVATING ACCOUNT ---');
             
-            const response = await fetch(`/api/complete-setup`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session?.access_token}`,
-                },
-                body: JSON.stringify({
+            const { data: result, error: invokeError } = await supabase.functions.invoke('Complete-Onboarding-Code', {
+                body: {
                     full_name: fullName.trim(),
                     phone: phone.trim() || null,
-                })
+                }
             });
 
-            const result = await response.json();
             console.log('--- ONBOARDING RESPONSE ---', result);
 
-            if (!response.ok) {
-                throw new Error(result.error || `Server error: ${response.status}`);
+            if (invokeError) {
+                throw new Error(invokeError.message || 'Failed to complete setup on Supabase');
+            }
+
+            if (!result || result.error) {
+                throw new Error(result?.error || 'Server error during onboarding');
             }
 
             if (result.member?.role) {
