@@ -32,12 +32,12 @@ export function Onboarding() {
     const [industry, setIndustry] = useState('');
     const [syncError, setSyncError] = useState(false);
 
-    // Skip to Step 3 if already active
+    // Automatic Redirect if already associated with an organization
     useEffect(() => {
-        if (profile?.status === 'Active' && profile?.organization_id) {
-            setStep(3);
+        if (profile?.organization_id) {
+            navigate('/dashboard', { replace: true });
         }
-    }, [profile]);
+    }, [profile, navigate]);
 
     const industries = [
         'Marketing Agency',

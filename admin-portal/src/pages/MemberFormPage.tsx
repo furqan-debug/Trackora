@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { 
     ChevronLeft, Save, 
@@ -23,10 +23,15 @@ export function MemberFormPage() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     
+    const [searchParams] = useSearchParams();
+    const requestedTab = searchParams.get('tab');
+    const tabs = ['General', 'Compensation', 'Limits', 'Dates', 'Contact', 'Additional'] as const;
+    const initialTab = tabs.find(t => t.toLowerCase() === requestedTab?.toLowerCase()) || 'General';
+
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'General' | 'Compensation' | 'Limits' | 'Dates' | 'Contact' | 'Additional'>('General');
+    const [activeTab, setActiveTab] = useState<typeof tabs[number]>(initialTab);
 
     // Form State
     const [fullName, setFullName] = useState('');
@@ -161,7 +166,6 @@ export function MemberFormPage() {
 
     if (loading) return <div className="h-screen flex items-center justify-center"><LoadingState message="Retrieving member profile..." /></div>;
 
-    const tabs = ['General', 'Compensation', 'Limits', 'Dates', 'Contact', 'Additional'] as const;
 
     return (
         <PageLayout

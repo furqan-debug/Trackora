@@ -46,7 +46,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Note: Using email for lookup as some legacy members might have mismatched IDs
         const { data: profile, error: profileError } = await supabaseAdmin
             .from('members')
-            .select('role')
+            .select('role, organization_id')
             .ilike('email', user.email || '')
             .maybeSingle();
 
@@ -55,6 +55,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 error: `Forbidden: Only Admins and Managers can invite users. Your detected role is: ${profile?.role || 'Guest'}` 
             });
         }
+
+        const orgId = profile.organization_id;
 
         const { email, role, pay_rate, bill_rate, weekly_limit, daily_limit } = req.body;
         if (!email) {
@@ -81,6 +83,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 full_name: email.split('@')[0], // Placeholder until they set it
                 role: role || 'User',
                 status: 'Pending',
+                organization_id: orgId, // CRITICAL: Link to inviter's organization
                 pay_rate: pay_rate || null,
                 bill_rate: bill_rate || null,
                 weekly_limit: weekly_limit || 40,

@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-    Users, Search, Filter, Download, UserPlus, Trash2, 
-    ChevronDown, MoreHorizontal, Pencil, RotateCcw, 
+import {
+    Users, Search, Filter, Download, UserPlus, Trash2,
+    ChevronDown, MoreHorizontal, Pencil, RotateCcw,
     Settings, Shield, User, AlertCircle, CheckCircle
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
-import { 
-    Button, 
-    Card, 
+import {
+    Button,
+    Card,
     PageLayout,
     Modal,
-    StatusBadge, 
-    EmptyState, 
-    LoadingState 
+    StatusBadge,
+    EmptyState,
+    LoadingState
 } from '../components/ui';
 import { supabase } from '../lib/supabase';
 
@@ -107,9 +107,9 @@ export function People() {
         if (!addEmail.trim()) return;
         try {
             const { data: { session } } = await supabase.auth.getSession();
-            
+
             console.log('--- ATTEMPTING INVITE ---');
-            
+
             // Use fetch directly for better error visibility
             const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-invite-email`, {
                 method: 'POST',
@@ -173,11 +173,12 @@ export function People() {
 
 
 
-    async function handleDelete(id: string) {
-        if (!confirm('Are you sure you want to remove this member?')) return;
-        setMembers(prev => prev.filter(m => m.id !== id));
+    async function handleDeactivate(id: string) {
+        if (!confirm('Are you sure you want to deactivate this member? This will stop their tracking and block access.')) return;
+        setMembers(prev => prev.map(m => m.id === id ? { ...m, status: 'Inactive' } : m));
         try {
-            await supabase.from('members').delete().eq('id', id);
+            const { error } = await supabase.from('members').update({ status: 'Inactive' }).eq('id', id);
+            if (error) throw error;
         } catch { fetchMembers(); }
     }
 
@@ -243,165 +244,165 @@ export function People() {
     const invitesCount = members.filter(m => m.status === 'Pending').length;
 
     return (
-            <PageLayout
-                title="Members"
-                description="Manage your team members, roles, and compensation settings."
-                maxWidth="full"
-                actions={
-                    <div className="flex items-center gap-3">
+        <PageLayout
+            title="Members"
+            description="Manage your team members, roles, and compensation settings."
+            maxWidth="full"
+            actions={
+                <div className="flex items-center gap-3">
+                    <Button
+                        variant="primary"
+                        leftIcon={<UserPlus className="w-5 h-5" />}
+                        onClick={() => { if (!isViewer) { resetAddForm(); setShowAddModal(true); } }}
+                        disabled={isViewer}
+                    >
+                        Invite Member
+                    </Button>
+                    <Button
+                        variant="secondary"
+                        leftIcon={<Download className="w-4 h-4" />}
+                        onClick={handleExportCsv}
+                    >
+                        Export CSV
+                    </Button>
+                </div>
+            }
+        >
+            <div className="flex bg-surface-subtle p-1 rounded-lg border border-border w-fit mb-10">
+                <button
+                    onClick={() => setActiveTab('Members')}
+                    className={clsx(
+                        "px-6 py-2 text-xs font-semibold rounded-md transition-all",
+                        activeTab === 'Members' ? "bg-white text-primary shadow-sm" : "text-text-muted hover:text-text-primary"
+                    )}
+                >
+                    Members ({membersCount})
+                </button>
+                <button
+                    onClick={() => setActiveTab('Invites')}
+                    className={clsx(
+                        "px-6 py-2 text-xs font-semibold rounded-md transition-all",
+                        activeTab === 'Invites' ? "bg-white text-primary shadow-sm" : "text-text-muted hover:text-text-primary"
+                    )}
+                >
+                    Pending Invites ({invitesCount})
+                </button>
+            </div>
+            {/* Action Bar */}
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-6 mb-8">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full lg:w-auto">
+                    <div className="relative group lg:w-[400px]">
+                        <Search className="w-5 h-5 text-text-muted absolute left-5 top-1/2 -translate-y-1/2 group-focus-within:text-primary transition-colors" />
+                        <input
+                            type="text"
+                            placeholder={`Search ${activeTab.toLowerCase()}...`}
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            className="w-full pl-13 pr-6 py-3.5 bg-surface-solid border border-border rounded-xl text-sm font-semibold text-text-primary placeholder:text-text-muted outline-none focus:border-primary transition-all"
+                        />
+                    </div>
+                    <Button
+                        variant="secondary"
+                        leftIcon={<Filter className="w-4 h-4" />}
+                        onClick={() => setShowFilters(!showFilters)}
+                        className={clsx(showFilters && "border-primary bg-primary/5")}
+                    >
+                        Filters
+                    </Button>
+                </div>
+
+                {selectedIds.size > 0 && (
+                    <div className="flex items-center gap-4 animate-in slide-in-from-right-4 duration-300">
+                        <span className="text-[10px] font-bold text-primary bg-primary/5 px-4 py-2 rounded-full border border-primary/10 uppercase tracking-wider">
+                            {selectedIds.size} Selected
+                        </span>
                         <Button
-                            variant="primary"
-                            leftIcon={<UserPlus className="w-5 h-5" />}
-                            onClick={() => { if (!isViewer) { resetAddForm(); setShowAddModal(true); } }}
+                            variant="danger"
+                            size="sm"
+                            leftIcon={<Trash2 className="w-4 h-4" />}
+                            onClick={handleBatchDelete}
                             disabled={isViewer}
                         >
-                            Invite Member
-                        </Button>
-                        <Button
-                            variant="secondary"
-                            leftIcon={<Download className="w-4 h-4" />}
-                            onClick={handleExportCsv}
-                        >
-                            Export CSV
+                            Batch Delete
                         </Button>
                     </div>
-                }
-            >
-                <div className="flex bg-surface-subtle p-1 rounded-lg border border-border w-fit mb-10">
-                    <button
-                        onClick={() => setActiveTab('Members')}
-                        className={clsx(
-                            "px-6 py-2 text-xs font-semibold rounded-md transition-all",
-                            activeTab === 'Members' ? "bg-white text-primary shadow-sm" : "text-text-muted hover:text-text-primary"
-                        )}
-                    >
-                        Members ({membersCount})
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('Invites')}
-                        className={clsx(
-                            "px-6 py-2 text-xs font-semibold rounded-md transition-all",
-                            activeTab === 'Invites' ? "bg-white text-primary shadow-sm" : "text-text-muted hover:text-text-primary"
-                        )}
-                    >
-                        Pending Invites ({invitesCount})
-                    </button>
-                </div>
-                {/* Action Bar */}
-                <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-6 mb-8">
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full lg:w-auto">
-                        <div className="relative group lg:w-[400px]">
-                            <Search className="w-5 h-5 text-text-muted absolute left-5 top-1/2 -translate-y-1/2 group-focus-within:text-primary transition-colors" />
-                            <input
-                                type="text"
-                                placeholder={`Search ${activeTab.toLowerCase()}...`}
-                                value={search}
-                                onChange={e => setSearch(e.target.value)}
-                                className="w-full pl-13 pr-6 py-3.5 bg-surface-solid border border-border rounded-xl text-sm font-semibold text-text-primary placeholder:text-text-muted outline-none focus:border-primary transition-all"
-                            />
-                        </div>
-                        <Button
-                            variant="secondary"
-                            leftIcon={<Filter className="w-4 h-4" />}
-                            onClick={() => setShowFilters(!showFilters)}
-                            className={clsx(showFilters && "border-primary bg-primary/5")}
-                        >
-                            Filters
-                        </Button>
-                    </div>
+                )}
+            </div>
 
-                    {selectedIds.size > 0 && (
-                        <div className="flex items-center gap-4 animate-in slide-in-from-right-4 duration-300">
-                             <span className="text-[10px] font-bold text-primary bg-primary/5 px-4 py-2 rounded-full border border-primary/10 uppercase tracking-wider">
-                                {selectedIds.size} Selected
-                            </span>
-                            <Button 
-                                variant="danger" 
-                                size="sm" 
-                                leftIcon={<Trash2 className="w-4 h-4" />}
-                                onClick={handleBatchDelete}
-                                disabled={isViewer}
-                            >
-                                Batch Delete
-                            </Button>
-                        </div>
-                    )}
-                </div>
-
-                <Card noPadding className="border border-border/60 overflow-hidden shadow-sm">
-                    <div className="overflow-x-auto custom-scrollbar">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="border-b border-border bg-border/5">
-                                    <th className="pl-10 py-5 w-16">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedIds.size === filtered.length && filtered.length > 0}
-                                            onChange={toggleSelectAll}
-                                            className="w-5 h-5 rounded-lg border-border bg-surface-solid checked:bg-primary transition-all cursor-pointer shadow-sm"
-                                        />
-                                    </th>
-                                    <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest opacity-80">Member</th>
-                                    <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest opacity-80">Role</th>
-                                    <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Engagement</th>
-                                    <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Rates</th>
-                                    <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Limits</th>
-                                    <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Status</th>
-                                    <th className="pr-10 py-5 text-right text-[11px] font-bold text-text-muted uppercase tracking-widest opacity-80">Actions</th>
+            <Card noPadding className="border border-border/60 overflow-hidden shadow-sm">
+                <div className="overflow-x-auto custom-scrollbar">
+                    <table className="w-full text-left border-collapse">
+                        <thead>
+                            <tr className="border-b border-border bg-border/5">
+                                <th className="pl-10 py-5 w-16">
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedIds.size === filtered.length && filtered.length > 0}
+                                        onChange={toggleSelectAll}
+                                        className="w-5 h-5 rounded-lg border-border bg-surface-solid checked:bg-primary transition-all cursor-pointer shadow-sm"
+                                    />
+                                </th>
+                                <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest opacity-80">Member</th>
+                                <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest opacity-80">Role</th>
+                                <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Engagement</th>
+                                <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Rates</th>
+                                <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Limits</th>
+                                <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Status</th>
+                                <th className="pr-10 py-5 text-right text-[11px] font-bold text-text-muted uppercase tracking-widest opacity-80">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/40">
+                            {loading ? (
+                                <tr>
+                                    <td colSpan={10} className="py-24">
+                                        <LoadingState message="Loading members..." />
+                                    </td>
                                 </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border/40">
-                                {loading ? (
-                                    <tr>
-                                        <td colSpan={10} className="py-24">
-                                            <LoadingState message="Loading members..." />
-                                        </td>
-                                    </tr>
-                                ) : filtered.length === 0 ? (
-                                    <tr>
-                                        <td colSpan={10} className="py-24">
-                                            <EmptyState 
-                                                title={`No ${activeTab.toLowerCase()} found`}
-                                                description="Check your search query or invite a new team member."
-                                                icon={<Users className="w-10 h-10" />}
-                                            />
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    filtered.map((m: any) => (
-                                        <MemberRowItem
-                                            key={m.id}
-                                            m={m}
-                                            isSelected={selectedIds.has(m.id)}
-                                            onToggle={() => toggleSelection(m.id)}
-                                            onEdit={() => navigate(`/dashboard/people/${m.id}/edit`)}
-                                            onResendInvite={() => handleResendInvite(m.email)}
-                                            onDelete={() => handleDelete(m.id)}
-                                            isViewer={isViewer}
-                                            currentUserRole={profile?.role}
+                            ) : filtered.length === 0 ? (
+                                <tr>
+                                    <td colSpan={10} className="py-24">
+                                        <EmptyState
+                                            title={`No ${activeTab.toLowerCase()} found`}
+                                            description="Check your search query or invite a new team member."
+                                            icon={<Users className="w-10 h-10" />}
                                         />
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </Card>
-
-                {/* Pagination Placeholder */}
-                <div className="mt-8 flex items-center justify-between px-4">
-                    <div className="text-xs font-semibold text-text-muted opacity-70">
-                         Showing {filtered.length} members
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <Button variant="secondary" size="sm" disabled className="px-6 opacity-40">Previous</Button>
-                        <Button variant="secondary" size="sm" disabled className="px-6 opacity-40">Next</Button>
-                    </div>
+                                    </td>
+                                </tr>
+                            ) : (
+                                filtered.map((m: any) => (
+                                    <MemberRowItem
+                                        key={m.id}
+                                        m={m}
+                                        isSelected={selectedIds.has(m.id)}
+                                        onToggle={() => toggleSelection(m.id)}
+                                        onEdit={(tab?: string) => navigate(`/dashboard/people/${m.id}/edit${tab ? `?tab=${tab}` : ''}`)}
+                                        onResendInvite={() => handleResendInvite(m.email)}
+                                        onDelete={() => handleDeactivate(m.id)}
+                                        isViewer={isViewer}
+                                        currentUserRole={profile?.role}
+                                    />
+                                ))
+                            )}
+                        </tbody>
+                    </table>
                 </div>
+            </Card>
 
-                {/* Modals & Popups */}
-                {showAddModal && <InviteModal onClose={() => setShowAddModal(false)} onInvite={handleAddMember} form={{ addEmail, setAddEmail, addRole, setAddRole, addPayRate, setAddPayRate, addBillRate, setAddBillRate, addWeekly, setAddWeekly, addDaily, setAddDaily, adding, addError }} isViewer={isViewer} currentUserRole={profile?.role} />}
-                {inviteSentTo && <InviteSentPopup email={inviteSentTo} onClose={() => setInviteSentTo(null)} />}
-            </PageLayout>
+            {/* Pagination Placeholder */}
+            <div className="mt-8 flex items-center justify-between px-4">
+                <div className="text-xs font-semibold text-text-muted opacity-70">
+                    Showing {filtered.length} members
+                </div>
+                <div className="flex items-center gap-3">
+                    <Button variant="secondary" size="sm" disabled className="px-6 opacity-40">Previous</Button>
+                    <Button variant="secondary" size="sm" disabled className="px-6 opacity-40">Next</Button>
+                </div>
+            </div>
+
+            {/* Modals & Popups */}
+            {showAddModal && <InviteModal onClose={() => setShowAddModal(false)} onInvite={handleAddMember} form={{ addEmail, setAddEmail, addRole, setAddRole, addPayRate, setAddPayRate, addBillRate, setAddBillRate, addWeekly, setAddWeekly, addDaily, setAddDaily, adding, addError }} isViewer={isViewer} currentUserRole={profile?.role} />}
+            {inviteSentTo && <InviteSentPopup email={inviteSentTo} onClose={() => setInviteSentTo(null)} />}
+        </PageLayout>
     );
 }
 
@@ -448,7 +449,7 @@ function MemberRowItem({ m, isSelected, onToggle, onEdit, onResendInvite, onDele
                 </div>
             </td>
             <td className="px-8 py-6">
-                <StatusBadge 
+                <StatusBadge
                     variant={m.role === 'Admin' ? 'success' : m.role === 'Manager' ? 'warning' : 'default'}
                     icon={m.role === 'Admin' ? <Shield className="w-3 h-3" /> : m.role === 'Manager' ? <Shield className="w-3 h-3" /> : <User className="w-3 h-3" />}
                 >
@@ -492,7 +493,7 @@ function MemberRowItem({ m, isSelected, onToggle, onEdit, onResendInvite, onDele
                 </div>
             </td>
             <td className="px-8 py-6">
-                <StatusBadge 
+                <StatusBadge
                     variant={m.status === 'Active' ? 'success' : m.status === 'Pending' ? 'warning' : 'default'}
                 >
                     {m.status.toUpperCase()}
@@ -508,8 +509,8 @@ function MemberRowItem({ m, isSelected, onToggle, onEdit, onResendInvite, onDele
                 {open && (
                     <div className="absolute right-10 top-20 bg-surface-solid border border-border shadow-2xl rounded-2xl z-50 py-3 w-64 animate-in fade-in zoom-in-95 duration-200">
                         <div className="px-6 py-4 border-b border-border/40 mb-2">
-                             <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider mb-1">Options</p>
-                             <p className="text-[12px] font-bold text-text-primary truncate">{m.full_name}</p>
+                            <p className="text-[9px] font-bold text-text-muted uppercase tracking-wider mb-1">Options</p>
+                            <p className="text-[12px] font-bold text-text-primary truncate">{m.full_name}</p>
                         </div>
                         <DropItem
                             icon={<Pencil className="w-4 h-4" />}
@@ -524,10 +525,10 @@ function MemberRowItem({ m, isSelected, onToggle, onEdit, onResendInvite, onDele
                                 onClick={() => { if (!isRestricted) { onResendInvite(); setOpen(false); } }}
                             />
                         )}
-                        <DropItem 
-                            icon={<Settings className="w-4 h-4" />} 
-                            label="Configuration" 
-                            onClick={() => { setOpen(false); onEdit(); }} 
+                        <DropItem
+                            icon={<Settings className="w-4 h-4" />}
+                            label="Configuration"
+                            onClick={() => { setOpen(false); onEdit('Limits'); }}
                         />
                         <div className="my-2 border-t border-border/40" />
                         <DropItem
@@ -565,7 +566,7 @@ function DropItem({ icon, label, onClick, danger, disabled }: any) {
 
 function InviteModal({ onClose, onInvite, form, isViewer, currentUserRole }: any) {
     const rolesAvailable = currentUserRole === 'Admin' ? ['User', 'Viewer', 'Manager', 'Admin'] : ['User', 'Viewer', 'Manager'];
-    
+
     return (
         <Modal
             isOpen={true}
@@ -592,19 +593,19 @@ function InviteModal({ onClose, onInvite, form, isViewer, currentUserRole }: any
             }
         >
             <div className="space-y-6">
-                <FormField 
-                    label="Email Address" 
-                    value={form.addEmail} 
-                    onChange={form.setAddEmail} 
-                    type="email" 
-                    placeholder="email@company.com" 
+                <FormField
+                    label="Email Address"
+                    value={form.addEmail}
+                    onChange={form.setAddEmail}
+                    type="email"
+                    placeholder="email@company.com"
                 />
 
                 <div className="space-y-3">
                     <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Role</label>
                     <div className="relative group">
-                        <select 
-                            value={form.addRole} 
+                        <select
+                            value={form.addRole}
                             onChange={e => form.setAddRole(e.target.value)}
                             className="w-full px-6 py-4 bg-surface-solid border border-border rounded-2xl text-[14px] font-bold text-text-primary outline-none focus:border-primary transition-all appearance-none cursor-pointer"
                         >
@@ -626,8 +627,8 @@ function InviteModal({ onClose, onInvite, form, isViewer, currentUserRole }: any
 
                 {form.addError && (
                     <div className="bg-rose-500/5 border border-rose-500/20 text-rose-600 text-[10px] font-bold uppercase tracking-[0.1em] p-5 rounded-2xl leading-relaxed font-mono flex items-start gap-4 animate-in slide-in-from-top-2">
-                         <AlertCircle className="w-5 h-5 shrink-0" />
-                         {form.addError}
+                        <AlertCircle className="w-5 h-5 shrink-0" />
+                        {form.addError}
                     </div>
                 )}
             </div>
