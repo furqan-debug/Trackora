@@ -69,16 +69,23 @@ function SignedImage({ path, bucket, className, alt = "" }: { path: string; buck
 
   useEffect(() => {
     if (!path) return;
-    if (path.startsWith('http')) {
+    if (path.startsWith('http') && !path.includes('.supabase.co/storage/v1/object/')) {
       setUrl(path);
       return;
+    }
+
+    // Extract path from Supabase storage URL if needed
+    let finalPath = path;
+    if (path.includes('.supabase.co/storage/v1/object/')) {
+      const parts = path.split('/avatars/');
+      if (parts.length > 1) finalPath = parts[1];
     }
 
     let isMounted = true;
     const fetchUrl = async () => {
       try {
         const sb = await getSupabase();
-        const { data, error } = await sb.storage.from(bucket).createSignedUrl(path, 3600);
+        const { data, error } = await sb.storage.from(bucket).createSignedUrl(finalPath, 3600);
         if (error) throw error;
         if (isMounted) setUrl(data.signedUrl);
       } catch (err) {
