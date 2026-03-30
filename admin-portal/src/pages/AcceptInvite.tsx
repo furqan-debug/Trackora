@@ -74,6 +74,10 @@ export function AcceptInvite() {
             console.log('--- ACTIVATING ACCOUNT ---');
             
             const { data: result, error: invokeError } = await supabase.functions.invoke('Complete-Onboarding-Code', {
+                headers: {
+                    'Authorization': `Bearer ${session?.access_token}`,
+                    'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
+                },
                 body: {
                     full_name: fullName.trim(),
                     phone: phone.trim() || null,
