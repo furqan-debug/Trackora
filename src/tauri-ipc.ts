@@ -72,4 +72,18 @@ export const trackerAPI = {
     if (!invoke) return;
     return invoke('install_update');
   },
+
+  /** Get current inactivity status — returns true if active */
+  getInactivityStatus: async (): Promise<boolean> => {
+    const invoke = getInvoke();
+    if (!invoke) return false;
+    return invoke('get_inactivity_status') as Promise<boolean>;
+  },
+
+  /** Show native idle dialog and focus app */
+  showIdleDialog: async (limit: number): Promise<void> => {
+    const invoke = getInvoke();
+    if (!invoke) return;
+    return invoke('show_idle_dialog', { limit }) as Promise<void>;
+  },
 };

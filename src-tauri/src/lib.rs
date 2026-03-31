@@ -359,6 +359,37 @@ fn set_auth_token(state: tauri::State<'_, Mutex<AppState>>, token: String) -> Re
     Ok(())
 }
 
+/// invoke('get_inactivity_status')
+#[tauri::command]
+fn get_inactivity_status(state: tauri::State<'_, Mutex<AppState>>) -> bool {
+    let s = state.lock().unwrap();
+    let mut c = s.counts.lock().unwrap();
+    let active = c.mouse_count > 0 || c.keyboard_count > 0;
+    c.mouse_count = 0;
+    c.keyboard_count = 0;
+    active
+}
+
+/// invoke('show_idle_dialog')
+#[tauri::command]
+fn show_idle_dialog(app: tauri::AppHandle, limit: u32) {
+    use tauri::Manager;
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+    }
+    
+    app.dialog()
+        .message(format!("You have been inactive for {} minutes. Tracking is paused.\n\nPlease resume from the app when you are back.", limit))
+        .title("Inactivity Detected")
+        .kind(MessageDialogKind::Warning)
+        .show(|_| {});
+}
+
 // ─── App entry point ──────────────────────────────────────────────────────────
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -395,6 +426,8 @@ pub fn run() {
             show_notification_cmd,
             install_update,
             set_auth_token,
+            get_inactivity_status,
+            show_idle_dialog,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

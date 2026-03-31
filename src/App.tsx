@@ -536,6 +536,23 @@ export default function App() {
     }
   }, [elapsed, isTracking, isPaused, user, projects, activeProject]);
 
+  // --- DETECT RETURN FROM IDLE ---
+  useEffect(() => {
+    if (!idlePaused || screen !== 'tracker') return;
+
+    let stopped = false;
+    const pollId = setInterval(async () => {
+      const isReturn = await (trackerAPI as any).getInactivityStatus();
+      if (isReturn && !stopped) {
+        stopped = true;
+        (trackerAPI as any).showIdleDialog(user?.idle_limit || 10);
+        clearInterval(pollId);
+      }
+    }, 1000);
+
+    return () => { stopped = true; clearInterval(pollId); };
+  }, [idlePaused, screen, user?.idle_limit]);
+
   async function handleLogin(email: string, password: string): Promise<string | null> {
     try {
       const sb = await getSupabase();
