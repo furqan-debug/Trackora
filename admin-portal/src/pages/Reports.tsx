@@ -16,8 +16,11 @@ import {
 import clsx from 'clsx';
 import { 
     formatDuration, 
-    calculateActivityScore 
+    calculateActivityScore,
+    getEffectiveEnd,
+    flattenTimeRanges
 } from '../lib/dataUtils';
+import type { TimeInterval } from '../lib/dataUtils';
 
 const COLORS = ['#506ef8', '#818cf8', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
 const RANGES = ['Today', 'Last 7 Days', 'Last 30 Days'] as const;
@@ -101,7 +104,7 @@ export function Reports() {
         }
 
         let samplesQuery = supabase.from('activity_samples').select('*').gte('recorded_at', start).lte('recorded_at', end);
-        let sessionsQuery = supabase.from('sessions').select('id, user_id').gte('started_at', start).lte('started_at', end);
+        let sessionsQuery = supabase.from('sessions').select('id, user_id, started_at, ended_at').gte('started_at', start).lte('started_at', end);
         let ssQuery = supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', start).lte('recorded_at', end);
 
         if (filteredMemberIds.length > 0) {
@@ -123,40 +126,68 @@ export function Reports() {
             const memberMap = new Map();
             members.forEach(m => memberMap.set(m.id, m));
 
-            const activeSessions = new Set((sessions || []).map(s => s.id));
             const sessionToUserId = new Map();
             (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
+            const activeSessionIds = new Set((sessions || []).map(s => s.id));
 
+            // Filter samples for selected members in-memory
+            const filteredSamples = allSamples.filter(s => activeSessionIds.has(s.session_id));
+
+            // Group for flattening: [userId][dayKey]
+            const userDayIntervals: Record<string, Record<string, TimeInterval[]>> = {};
+            const sessionHasActivity: Record<string, boolean> = {};
+            const lastSampleAtMap: Record<string, string> = {};
+
+            (samples || []).forEach(s => {
+                sessionHasActivity[s.session_id] = true;
+                if (!lastSampleAtMap[s.session_id] || s.recorded_at > lastSampleAtMap[s.session_id]) {
+                    lastSampleAtMap[s.session_id] = s.recorded_at;
+                }
+            });
+
+            (sessions || []).forEach(s => {
+                const day = s.started_at.split('T')[0];
+                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleAtMap[s.id]);
+                const startMs = new Date(s.started_at).getTime();
+                const hasActivity = !!sessionHasActivity[s.id];
+
+                if (!userDayIntervals[s.user_id]) userDayIntervals[s.user_id] = {};
+                if (!userDayIntervals[s.user_id][day]) userDayIntervals[s.user_id][day] = [];
+                userDayIntervals[s.user_id][day].push({ startMs, endMs, hasActivity });
+            });
+
+            let totalMinsVal = 0;
             let costs = 0;
             let billed = 0;
+            const dailyMap: Record<string, { total: number; active: number; minutes: number }> = {};
 
-            const dailyMap: Record<string, { total: number; active: number }> = {};
-            
-            // Filter samples for selected members in-memory if needed
-            const filteredSamples = filteredMemberIds.length > 0 
-                ? allSamples.filter(s => activeSessions.has(s.session_id))
-                : allSamples;
+            Object.entries(userDayIntervals).forEach(([uid, days]) => {
+                const m = memberMap.get(uid);
+                Object.entries(days).forEach(([day, intervals]) => {
+                    const flatMins = flattenTimeRanges(intervals);
+                    totalMinsVal += flatMins;
+                    
+                    if (!dailyMap[day]) dailyMap[day] = { total: 0, active: 0, minutes: 0 };
+                    dailyMap[day].minutes += flatMins;
+
+                    if (m) {
+                        costs += (flatMins / 60) * (m.pay_rate || 0);
+                        billed += (flatMins / 60) * (m.bill_rate || 0);
+                    }
+                });
+            });
 
             filteredSamples.forEach(s => {
                 const day = s.recorded_at.split('T')[0];
-                if (!dailyMap[day]) dailyMap[day] = { total: 0, active: 0 };
+                if (!dailyMap[day]) dailyMap[day] = { total: 0, active: 0, minutes: 0 };
                 dailyMap[day].total++;
                 if (!s.idle) dailyMap[day].active++;
-
-                // Sample represents ~1 minute. 1/60th of hourly rate
-                const sUserId = sessionToUserId.get(s.session_id);
-                if (sUserId) {
-                    const m = memberMap.get(sUserId);
-                    if (m) {
-                        costs += (m.pay_rate || 0) / 60;
-                        billed += (m.bill_rate || 0) / 60;
-                    }
-                }
             });
+
             setDailyActivity(Object.entries(dailyMap).sort().map(([date, v]) => ({
                 date: new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
                 activity: v.total > 0 ? Math.round((v.active / v.total) * 100) : 0,
-                minutes: v.total,
+                minutes: Math.round(v.minutes),
             })));
 
             const appMap: Record<string, number> = {};
@@ -170,7 +201,7 @@ export function Reports() {
 
             setTotalSessions((sessions || []).length);
             setScreenshotCount(ssCount || 0);
-            setTotalMins(filteredSamples.length);
+            setTotalMins(totalMinsVal);
             setTotalCosts(Math.round(costs));
             setTotalBilled(Math.round(billed));
             setAvgActivity(calculateActivityScore(filteredSamples));

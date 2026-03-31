@@ -11,8 +11,10 @@ import {
 } from '../components/ui';
 import clsx from 'clsx';
 import { 
-    getEffectiveEnd
+    getEffectiveEnd,
+    flattenTimeRanges
 } from '../lib/dataUtils';
+import type { TimeInterval } from '../lib/dataUtils';
 
 interface DayTotal {
     member: string;
@@ -76,27 +78,42 @@ export function DailyTotals() {
                     memberMap[m.id] = m.full_name;
                 });
 
+                const sessionHasActivity: Record<string, boolean> = {};
                 const lastSampleMap: Record<string, string> = {};
                 (samples || []).forEach(s => {
+                    sessionHasActivity[s.session_id] = true;
                     if (!lastSampleMap[s.session_id] || s.recorded_at > lastSampleMap[s.session_id]) {
                         lastSampleMap[s.session_id] = s.recorded_at;
                     }
                 });
 
-                const stats: Record<string, number[]> = {};
+                const userDayIntervals: Record<string, Record<number, TimeInterval[]>> = {};
+
                 sessions.forEach(s => {
                     const uid = s.user_id;
                     if (!uid || !memberMap[uid]) return;
-                    if (!stats[uid]) stats[uid] = Array(7).fill(0);
 
                     const sDate = new Date(s.started_at);
                     const dayIdx = (sDate.getDay() + 6) % 7; // Mon=0 ... Sun=6
 
                     const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleMap[s.id]);
                     const startMs = new Date(s.started_at).getTime();
-                    const mins = Math.max(0, (endMs - startMs) / 60000);
+                    const hasActivity = !!sessionHasActivity[s.id];
+
+                    if (!userDayIntervals[uid]) userDayIntervals[uid] = {};
+                    if (!userDayIntervals[uid][dayIdx]) userDayIntervals[uid][dayIdx] = [];
                     
-                    stats[uid][dayIdx] += (mins / 60);
+                    userDayIntervals[uid][dayIdx].push({ startMs, endMs, hasActivity });
+                });
+
+                const stats: Record<string, number[]> = {};
+                Object.entries(userDayIntervals).forEach(([uid, days]) => {
+                    stats[uid] = Array(7).fill(0);
+                    Object.entries(days).forEach(([dIdxStr, intervals]) => {
+                        const dIdx = parseInt(dIdxStr);
+                        const flatMins = flattenTimeRanges(intervals);
+                        stats[uid][dIdx] = flatMins / 60;
+                    });
                 });
 
                 const result: DayTotal[] = Object.entries(stats).map(([uid, totals]) => ({

@@ -12,8 +12,10 @@ import clsx from 'clsx';
 import { 
     getEffectiveEnd, 
     formatDuration, 
-    calculateActivityScore 
+    calculateActivityScore,
+    flattenTimeRanges
 } from '../lib/dataUtils';
+import type { TimeInterval } from '../lib/dataUtils';
 
 interface Session {
     id: string;
@@ -105,17 +107,35 @@ export function Timesheets() {
                 dailyMap[key] = { date: key, sessions: [], totalMinutes: 0, activeMinutes: 0, activityPercent: 0 };
             }
 
+            // Group sessions by day and user for flattening
+            const userDayIntervals: Record<string, Record<string, TimeInterval[]>> = {};
+
             (sessions || []).forEach(s => {
-                const key = s.started_at.split('T')[0]!;
-                if (!dailyMap[key]) return;
-                dailyMap[key].sessions.push(s as Session);
+                const dayKey = s.started_at.split('T')[0]!;
+                if (!dailyMap[dayKey]) return;
+                dailyMap[dayKey].sessions.push(s as Session);
                 
-                const startMs = new Date(s.started_at).getTime();
                 const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleMap[s.id]);
-                dailyMap[key].totalMinutes += Math.max(0, Math.round((endMs - startMs) / 60000));
+                const startMs = new Date(s.started_at).getTime();
+                const hasActivity = (sessionSamplesMap[s.id] || []).length > 0;
+
+                if (!userDayIntervals[dayKey]) userDayIntervals[dayKey] = {};
+                if (!userDayIntervals[dayKey][s.user_id]) userDayIntervals[dayKey][s.user_id] = [];
+                
+                userDayIntervals[dayKey][s.user_id].push({ startMs, endMs, hasActivity });
             });
 
             const result = Object.values(dailyMap).map(d => {
+                const dayKey = d.date;
+                let dayTotalMins = 0;
+
+                // Flatten intervals for each user on this day
+                if (userDayIntervals[dayKey]) {
+                    Object.values(userDayIntervals[dayKey]).forEach(intervals => {
+                        dayTotalMins += flattenTimeRanges(intervals);
+                    });
+                }
+
                 // Collect all samples for this day's sessions
                 const daySamples = d.sessions.reduce((acc, s) => {
                     return acc.concat(sessionSamplesMap[s.id] || []);
@@ -123,6 +143,7 @@ export function Timesheets() {
 
                 return {
                     ...d,
+                    totalMinutes: dayTotalMins,
                     activityPercent: calculateActivityScore(daySamples)
                 };
             });

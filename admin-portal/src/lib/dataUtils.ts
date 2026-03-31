@@ -5,6 +5,12 @@
 export const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
 export const MAX_LIVE_SESSION_MS = 12 * 60 * 60 * 1000; // 12 hours (sanity cap for live sessions)
 
+export interface TimeInterval {
+    startMs: number;
+    endMs: number;
+    hasActivity: boolean;
+}
+
 /**
  * Calculates a "safe" end time for a session.
  * Handles "ghost" sessions (unended sessions from the past) by capping them.
@@ -36,7 +42,7 @@ export function getEffectiveEnd(startedAt: string, endedAt: string | null, lastS
     // 3. If session is older but we have a recent activity sample, use that as the end point.
     if (lastSampleAt) {
         const lastSampleMs = new Date(lastSampleAt).getTime();
-        // Only use the sample if it's reasonably related to this session (after start)
+        // Only use the sample if it's after the start point
         if (lastSampleMs > startMs) {
             return { 
                 endMs: lastSampleMs + (5 * 60000), // Add 5 mins buffer
@@ -57,7 +63,38 @@ export function getEffectiveEnd(startedAt: string, endedAt: string | null, lastS
 }
 
 /**
- * Formats minutes into "Xh Ym" string.
+ * Merges overlapping time intervals for the same user to avoid double-counting.
+ * Also filters out intervals with no activity if required.
+ */
+export function flattenTimeRanges(intervals: TimeInterval[]): number {
+    const activeIntervals = intervals.filter(i => i.hasActivity);
+    if (activeIntervals.length === 0) return 0;
+    
+    // Sort intervals by start time
+    activeIntervals.sort((a, b) => a.startMs - b.startMs);
+    
+    const merged: { start: number, end: number }[] = [];
+    let current = { start: activeIntervals[0].startMs, end: activeIntervals[0].endMs };
+    
+    for (let i = 1; i < activeIntervals.length; i++) {
+        const next = activeIntervals[i];
+        if (next.startMs < current.end) {
+            // Overlapping - extend the current interval
+            current.end = Math.max(current.end, next.endMs);
+        } else {
+            // Non-overlapping - push the current and start a new one
+            merged.push({ ...current });
+            current = { start: next.startMs, end: next.endMs };
+        }
+    }
+    merged.push(current);
+    
+    // Sum the durations of unique intervals
+    return merged.reduce((acc, m) => acc + (m.end - m.start), 0) / 60000; // Total in decimal minutes
+}
+
+/**
+ * Formats decimal minutes into "Xh Ym" string.
  */
 export function formatDuration(minutes: number): string {
     const totalMinutes = Math.max(0, Math.round(minutes));
@@ -72,6 +109,7 @@ export function formatDuration(minutes: number): string {
 
 /**
  * Calculates activity percentage from samples.
+ * If there are no samples, it returns 0.
  */
 export function calculateActivityScore(samples: { idle?: boolean, activity_percent?: number }[]): number {
     if (!samples.length) return 0;

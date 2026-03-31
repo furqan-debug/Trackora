@@ -87,10 +87,26 @@ export function Activity() {
         setLoading(false);
     }
 
-    const totalClicks = samples.reduce((a, b) => a + b.mouse_clicks, 0);
-    const totalKeys = samples.reduce((a, b) => a + b.key_presses, 0);
-    const avgActivity = calculateActivityScore(samples);
-    const activeTime = samples.filter(s => !s.idle).length;
+    // Deduplicate samples by minute to avoid double-counting in KPIs if sessions overlap
+    const uniqueMinMap = new Map<string, ActivitySample>();
+    samples.forEach(s => {
+        const minKey = s.recorded_at.substring(0, 16); // YYYY-MM-DDTHH:mm
+        if (!uniqueMinMap.has(minKey)) {
+            uniqueMinMap.set(minKey, s);
+        } else {
+            // If overlap, take the one with more activity
+            const existing = uniqueMinMap.get(minKey)!;
+            if ((s.mouse_clicks + s.key_presses) > (existing.mouse_clicks + existing.key_presses)) {
+                uniqueMinMap.set(minKey, s);
+            }
+        }
+    });
+
+    const uniqueSamples = Array.from(uniqueMinMap.values());
+    const totalClicks = uniqueSamples.reduce((a, b) => a + b.mouse_clicks, 0);
+    const totalKeys = uniqueSamples.reduce((a, b) => a + b.key_presses, 0);
+    const avgActivity = calculateActivityScore(uniqueSamples);
+    const activeTime = uniqueSamples.filter(s => !s.idle).length;
 
     const isToday = selectedDate === new Date().toISOString().split('T')[0];
     const dateLabel = isToday ? 'Live Timeline' : new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });

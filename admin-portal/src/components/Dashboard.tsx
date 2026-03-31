@@ -9,8 +9,10 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGri
 import { PageLayout, Card, KpiCard, EmptyState, LoadingState } from './ui';
 import { 
     getEffectiveEnd, 
-    formatDuration 
+    formatDuration,
+    flattenTimeRanges
 } from '../lib/dataUtils';
+import type { TimeInterval } from '../lib/dataUtils';
 
 interface DashStats {
     todayMinutes: number;
@@ -52,60 +54,85 @@ export function Dashboard() {
         try {
             setLoading(true);
             const now = new Date();
-            const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
             const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay()); weekStart.setHours(0, 0, 0, 0);
 
             const [
                 { data: rawSessions },
                 { data: projectsData },
                 { data: membersData },
+                { data: activityData },
                 { count: ssCount },
             ] = await Promise.all([
                 supabase.from('sessions').select('id, user_id, project_id, started_at, ended_at'),
                 supabase.from('projects').select('id, name, color'),
                 supabase.from('members').select('id, pay_rate'),
+                supabase.from('activity_samples').select('session_id, recorded_at').gte('recorded_at', weekStart.toISOString()),
                 supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', weekStart.toISOString()),
             ]);
 
-            const todaySessions = (rawSessions || []).filter(s => new Date(s.started_at) >= todayStart);
-            const weekSessions = (rawSessions || []).filter(s => new Date(s.started_at) >= weekStart);
-
-            const todayMins = todaySessions.reduce((acc, s) => {
-                const start = new Date(s.started_at).getTime();
-                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at);
-                return acc + Math.max(0, Math.round((endMs - start) / 60000));
-            }, 0);
-
+            // Map samples to sessions for activity filtering
+            const sessionHasActivity: Record<string, boolean> = {};
+            const lastSampleAtMap: Record<string, string> = {};
+            (activityData || []).forEach(a => {
+                sessionHasActivity[a.session_id] = true;
+                if (!lastSampleAtMap[a.session_id] || a.recorded_at > lastSampleAtMap[a.session_id]) {
+                    lastSampleAtMap[a.session_id] = a.recorded_at;
+                }
+            });
+            
             const memberRateMap: Record<string, number> = {};
             (membersData || []).forEach(m => { memberRateMap[m.id] = m.pay_rate ?? 0; });
 
-            let weekMins = 0;
-            let weekCost = 0;
-            const projectMinMap: Record<string, number> = {};
-            const dayMinMap: number[] = Array(7).fill(0);
             const uniqueMembers = new Set<string>();
             const uniqueProjects = new Set<string>();
+            const projectMinMap: Record<string, number> = {};
+            const dayMinMap: number[] = Array(7).fill(0);
+            
+            // Group for flattening
+            const userDayIntervals: Record<string, Record<number, TimeInterval[]>> = {};
 
+            const weekSessions = (rawSessions || []).filter(s => new Date(s.started_at) >= weekStart);
+            
             weekSessions.forEach(s => {
-                const start = new Date(s.started_at).getTime();
-                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at);
-                const mins = Math.max(0, Math.round((endMs - start) / 60000));
-
-                weekMins += mins;
+                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleAtMap[s.id]);
+                const startMs = new Date(s.started_at).getTime();
+                const dayIdx = new Date(s.started_at).getDay();
+                const hasActivity = !!sessionHasActivity[s.id];
 
                 if (s.user_id) {
                     uniqueMembers.add(s.user_id);
-                    const rate = memberRateMap[s.user_id] ?? 0;
-                    weekCost += (mins / 60) * rate;
+                    if (!userDayIntervals[s.user_id]) userDayIntervals[s.user_id] = {};
+                    if (!userDayIntervals[s.user_id][dayIdx]) userDayIntervals[s.user_id][dayIdx] = [];
+                    userDayIntervals[s.user_id][dayIdx].push({ startMs, endMs, hasActivity });
                 }
 
-                if (s.project_id) {
+                if (s.project_id && hasActivity) {
                     uniqueProjects.add(s.project_id);
+                    const mins = Math.max(0, (endMs - startMs) / 60000);
                     projectMinMap[s.project_id] = (projectMinMap[s.project_id] || 0) + mins;
                 }
+            });
 
-                const dayIdx = new Date(s.started_at).getDay();
-                dayMinMap[dayIdx] += mins;
+            let weekMins = 0;
+            let weekCost = 0;
+            let todayMins = 0;
+            const todayIdx = now.getDay();
+
+            // Calculate flattened totals
+            Object.entries(userDayIntervals).forEach(([uid, days]) => {
+                const rate = memberRateMap[uid] ?? 0;
+                Object.entries(days).forEach(([dIdxStr, intervals]) => {
+                    const dIdx = parseInt(dIdxStr);
+                    const flatMins = flattenTimeRanges(intervals);
+                    
+                    weekMins += flatMins;
+                    weekCost += (flatMins / 60) * rate;
+                    dayMinMap[dIdx] += flatMins;
+                    
+                    if (dIdx === todayIdx) {
+                        todayMins += flatMins;
+                    }
+                });
             });
 
             const projectMap: Record<string, string> = {};
