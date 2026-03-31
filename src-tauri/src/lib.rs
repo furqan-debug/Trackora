@@ -22,6 +22,8 @@ pub struct AppState {
     pub tracking_running: Arc<Mutex<bool>>,
     pub counts: Arc<Mutex<tracker::TrackerCounts>>,
     pub db: Arc<Mutex<Option<rusqlite::Connection>>>,
+    pub is_idle_monitoring: Arc<Mutex<bool>>,
+    pub last_idle_limit: Arc<Mutex<u32>>,
 }
 
 impl Default for AppState {
@@ -42,6 +44,8 @@ impl Default for AppState {
             tracking_running: Arc::new(Mutex::new(false)),
             counts: Arc::new(Mutex::new(tracker::TrackerCounts::default())),
             db: Arc::new(Mutex::new(db)),
+            is_idle_monitoring: Arc::new(Mutex::new(false)),
+            last_idle_limit: Arc::new(Mutex::new(10)),
         }
     }
 }
@@ -390,6 +394,25 @@ fn show_idle_dialog(app: tauri::AppHandle, limit: u32) {
         .show(|_| {});
 }
 
+/// invoke('start_idle_monitoring', { limit })
+#[tauri::command]
+fn start_idle_monitoring(state: tauri::State<'_, Mutex<AppState>>, limit: u32) {
+    let s = state.lock().unwrap();
+    *s.is_idle_monitoring.lock().unwrap() = true;
+    *s.last_idle_limit.lock().unwrap() = limit;
+    // Reset counts so we only detect new movement
+    let mut c = s.counts.lock().unwrap();
+    c.mouse_count = 0;
+    c.keyboard_count = 0;
+}
+
+/// invoke('stop_idle_monitoring')
+#[tauri::command]
+fn stop_idle_monitoring(state: tauri::State<'_, Mutex<AppState>>) {
+    let s = state.lock().unwrap();
+    *s.is_idle_monitoring.lock().unwrap() = false;
+}
+
 // ─── App entry point ──────────────────────────────────────────────────────────
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -411,6 +434,41 @@ pub fn run() {
                 updater::check_for_updates(app_handle).await;
             });
 
+            // --- BACKGROUND IDLE WATCHER ---
+            let app_handle_watcher = app.handle().clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    
+                    let state = app_handle_watcher.state::<Mutex<AppState>>();
+                    let (monitoring, limit) = {
+                        let s = state.lock().unwrap();
+                        (*s.is_idle_monitoring.lock().unwrap(), *s.last_idle_limit.lock().unwrap())
+                    };
+
+                    if monitoring {
+                        let active = {
+                            let s = state.lock().unwrap();
+                            let mut c = s.counts.lock().unwrap();
+                            let active = c.mouse_count > 0 || c.keyboard_count > 0;
+                            if active {
+                                c.mouse_count = 0;
+                                c.keyboard_count = 0;
+                            }
+                            active
+                        };
+
+                        if active {
+                            {
+                                let s = state.lock().unwrap();
+                                *s.is_idle_monitoring.lock().unwrap() = false;
+                            }
+                            show_idle_dialog(app_handle_watcher.clone(), limit);
+                        }
+                    }
+                }
+            });
+
             #[cfg(debug_assertions)]
             {
                 let window = app.get_webview_window("main").unwrap();
@@ -428,6 +486,8 @@ pub fn run() {
             set_auth_token,
             get_inactivity_status,
             show_idle_dialog,
+            start_idle_monitoring,
+            stop_idle_monitoring,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

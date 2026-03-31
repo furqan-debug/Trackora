@@ -408,6 +408,7 @@ export default function App() {
           handlePause();
           setElapsed(current => Math.max(0, current - (limit * 60)));
           idleMinutesRef.current = 0;
+          (trackerAPI as any).startIdleMonitoring(limit);
         }
       } else {
         idleMinutesRef.current = 0;
@@ -536,22 +537,7 @@ export default function App() {
     }
   }, [elapsed, isTracking, isPaused, user, projects, activeProject]);
 
-  // --- DETECT RETURN FROM IDLE ---
-  useEffect(() => {
-    if (!idlePaused || screen !== 'tracker') return;
 
-    let stopped = false;
-    const pollId = setInterval(async () => {
-      const isReturn = await (trackerAPI as any).getInactivityStatus();
-      if (isReturn && !stopped) {
-        stopped = true;
-        (trackerAPI as any).showIdleDialog(user?.idle_limit || 10);
-        clearInterval(pollId);
-      }
-    }, 1000);
-
-    return () => { stopped = true; clearInterval(pollId); };
-  }, [idlePaused, screen, user?.idle_limit]);
 
   async function handleLogin(email: string, password: string): Promise<string | null> {
     try {
@@ -776,7 +762,7 @@ export default function App() {
               sessionId={sessionId} 
               isPaused={isPaused} 
               idlePaused={idlePaused}
-              onResumeFromIdle={() => { setIdlePaused(false); handleResume(); }}
+              onResumeFromIdle={() => { setIdlePaused(false); (trackerAPI as any).stopIdleMonitoring(); handleResume(); }}
               elapsed={elapsed} 
               onStop={handleStop} 
               onPause={handlePause} 

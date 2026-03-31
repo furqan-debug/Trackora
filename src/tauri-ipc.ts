@@ -86,4 +86,18 @@ export const trackerAPI = {
     if (!invoke) return;
     return invoke('show_idle_dialog', { limit }) as Promise<void>;
   },
+
+  /** Start background idle monitoring in Rust */
+  startIdleMonitoring: async (limit: number): Promise<void> => {
+    const invoke = getInvoke();
+    if (!invoke) return;
+    return invoke('start_idle_monitoring', { limit }) as Promise<void>;
+  },
+
+  /** Stop background idle monitoring in Rust */
+  stopIdleMonitoring: async (): Promise<void> => {
+    const invoke = getInvoke();
+    if (!invoke) return;
+    return invoke('stop_idle_monitoring') as Promise<void>;
+  },
 };
