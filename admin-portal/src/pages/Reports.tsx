@@ -146,14 +146,33 @@ export function Reports() {
             });
 
             (sessions || []).forEach(s => {
-                const day = s.started_at.split('T')[0];
                 const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleAtMap[s.id]);
                 const startMs = new Date(s.started_at).getTime();
                 const hasActivity = !!sessionHasActivity[s.id];
 
-                if (!userDayIntervals[s.user_id]) userDayIntervals[s.user_id] = {};
-                if (!userDayIntervals[s.user_id][day]) userDayIntervals[s.user_id][day] = [];
-                userDayIntervals[s.user_id][day].push({ startMs, endMs, hasActivity });
+                // Split session if it crosses midnight
+                let currentStart = startMs;
+                while (currentStart < endMs) {
+                    const d = new Date(currentStart);
+                    const day = d.toISOString().split('T')[0];
+                    
+                    const nextDay = new Date(d);
+                    nextDay.setHours(24, 0, 0, 0);
+                    const nextDayMs = nextDay.getTime();
+                    
+                    const currentEnd = Math.min(endMs, nextDayMs);
+                    
+                    if (!userDayIntervals[s.user_id]) userDayIntervals[s.user_id] = {};
+                    if (!userDayIntervals[s.user_id][day]) userDayIntervals[s.user_id][day] = [];
+                    
+                    userDayIntervals[s.user_id][day].push({ 
+                        startMs: currentStart, 
+                        endMs: currentEnd, 
+                        hasActivity 
+                    });
+                    
+                    currentStart = currentEnd;
+                }
             });
 
             let totalMinsVal = 0;

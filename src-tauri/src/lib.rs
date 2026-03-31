@@ -167,6 +167,18 @@ fn start_tracking(
     user_id: String,
     token: String,
 ) -> TrackingResult {
+    // Check if tracking is already running to prevent duplicate loops
+    {
+        let is_running = state.lock().unwrap().tracking_running.lock().unwrap().clone();
+        if is_running {
+            return TrackingResult { 
+                status: "running".to_string(), 
+                session_id: state.lock().unwrap().active_session_id.clone(), 
+                error: None 
+            };
+        }
+    }
+    
     let (cfg, counts, running, auth_arc, db_arc) = {
         let mut s = state.lock().unwrap();
         *s.auth_token.lock().unwrap() = Some(token.clone());
@@ -308,6 +320,14 @@ fn resume_tracking(
 ) -> TrackingResult {
     let (cfg, session_id, counts, running, auth_arc, db_arc, user_id, org_id) = {
         let s = state.lock().unwrap();
+        // Guard against duplicate loops
+        if *s.tracking_running.lock().unwrap() {
+            return TrackingResult { 
+                status: "running".to_string(), 
+                session_id: s.active_session_id.clone(), 
+                error: None 
+            };
+        }
         (
             SupabaseConfig { url: s.supabase_url.clone(), anon_key: s.supabase_anon_key.clone() },
             s.active_session_id.clone(),

@@ -63,6 +63,37 @@ export function getEffectiveEnd(startedAt: string, endedAt: string | null, lastS
 }
 
 /**
+ * Splits intervals that cross midnight into separate entries.
+ */
+export function splitIntervalsAtMidnight(intervals: TimeInterval[]): TimeInterval[] {
+    const result: TimeInterval[] = [];
+    
+    for (const interval of intervals) {
+        let currentStart = interval.startMs;
+        const finalEnd = interval.endMs;
+        
+        while (currentStart < finalEnd) {
+            const startDay = new Date(currentStart);
+            const endOfDay = new Date(startDay);
+            endOfDay.setHours(23, 59, 59, 999);
+            const endOfDayMs = endOfDay.getTime();
+            
+            const currentEnd = Math.min(finalEnd, endOfDayMs + 1); // +1 to push to midnight 00:00:00.000
+            
+            result.push({
+                ...interval,
+                startMs: currentStart,
+                endMs: currentEnd
+            });
+            
+            currentStart = currentEnd;
+        }
+    }
+    
+    return result;
+}
+
+/**
  * Merges overlapping time intervals for the same user to avoid double-counting.
  * Also filters out intervals with no activity if required.
  */
@@ -70,14 +101,19 @@ export function flattenTimeRanges(intervals: TimeInterval[]): number {
     const activeIntervals = intervals.filter(i => i.hasActivity);
     if (activeIntervals.length === 0) return 0;
     
+    // 1. Split any intervals that cross midnight
+    const splitIntervals = splitIntervalsAtMidnight(activeIntervals);
+    
     // Sort intervals by start time
-    activeIntervals.sort((a, b) => a.startMs - b.startMs);
+    splitIntervals.sort((a, b) => a.startMs - b.startMs);
     
+    if (splitIntervals.length === 0) return 0;
+
     const merged: { start: number, end: number }[] = [];
-    let current = { start: activeIntervals[0].startMs, end: activeIntervals[0].endMs };
+    let current = { start: splitIntervals[0].startMs, end: splitIntervals[0].endMs };
     
-    for (let i = 1; i < activeIntervals.length; i++) {
-        const next = activeIntervals[i];
+    for (let i = 1; i < splitIntervals.length; i++) {
+        const next = splitIntervals[i];
         if (next.startMs < current.end) {
             // Overlapping - extend the current interval
             current.end = Math.max(current.end, next.endMs);
@@ -90,7 +126,10 @@ export function flattenTimeRanges(intervals: TimeInterval[]): number {
     merged.push(current);
     
     // Sum the durations of unique intervals
-    return merged.reduce((acc, m) => acc + (m.end - m.start), 0) / 60000; // Total in decimal minutes
+    // Use Math.min to ensure no single day block exceeds 24 hours (86400000 ms)
+    // although split logic already handles most of this.
+    const totalMs = merged.reduce((acc, m) => acc + (m.end - m.start), 0);
+    return totalMs / 60000; // Total in decimal minutes
 }
 
 /**
@@ -125,3 +164,4 @@ export function calculateActivityScore(samples: { idle?: boolean, activity_perce
     const activeCount = samples.filter(s => !s.idle).length;
     return Math.round((activeCount / samples.length) * 100);
 }
+
