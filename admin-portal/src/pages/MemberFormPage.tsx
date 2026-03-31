@@ -15,6 +15,7 @@ import {
     LoadingState,
     StatusBadge
 } from '../components/ui';
+import { SecureImage } from '../components/ui/SecureImage';
 import clsx from 'clsx';
 
 type Role = 'Admin' | 'Manager' | 'User' | 'Viewer';
@@ -63,6 +64,7 @@ export function MemberFormPage() {
     const [idleEnabled, setIdleEnabled] = useState(true);
     const [idleLimit, setIdleLimit] = useState('10');
     const [trackingEnabled, setTrackingEnabled] = useState(true);
+    const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
     useEffect(() => {
         if (id) loadMember();
@@ -107,6 +109,7 @@ export function MemberFormPage() {
                 setIdleEnabled(data.idle_enabled ?? true);
                 setIdleLimit(data.idle_limit?.toString() || '10');
                 setTrackingEnabled(data.tracking_enabled ?? true);
+                setAvatarUrl(data.avatar_url || null);
             }
         } catch (err: any) {
             setError(err.message);
@@ -204,8 +207,16 @@ export function MemberFormPage() {
                     {activeTab === 'General' && (
                         <Card className="p-10 border-border/60 shadow-sm overflow-visible">
                             <div className="flex items-center gap-6 mb-10 pb-10 border-b border-border/40">
-                                <div className="w-20 h-20 rounded-[28px] bg-primary/5 flex items-center justify-center text-primary text-2xl font-bold border border-primary/10 shadow-inner">
-                                    {(fullName || 'U').charAt(0).toUpperCase()}
+                                <div className="w-20 h-20 rounded-[28px] bg-primary/5 flex items-center justify-center text-primary text-2xl font-bold border border-primary/10 shadow-inner overflow-hidden">
+                                    {avatarUrl ? (
+                                        <SecureImage 
+                                            path={avatarUrl} 
+                                            bucket="avatars" 
+                                            className="w-full h-full object-cover" 
+                                        />
+                                    ) : (
+                                        (fullName || 'U').charAt(0).toUpperCase()
+                                    )}
                                 </div>
                                 <div className="flex-1">
                                     <h3 className="text-xl font-bold text-text-primary tracking-tight mb-1">{fullName || 'Unknown Member'}</h3>

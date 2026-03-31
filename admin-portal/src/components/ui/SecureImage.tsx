@@ -16,11 +16,21 @@ export function SecureImage({ path, bucket = 'screenshots', className, ...props 
         const fetchSignedUrl = async () => {
             if (!path) return;
             
-            // If it's already a full URL, use it directly
-            if (path.startsWith('http')) {
+            // If it's already a full URL AND NOT a Supabase storage URL, use it directly
+            if (path.startsWith('http') && !path.includes('.supabase.co/storage/v1/object/')) {
                 setUrl(path);
                 setLoading(false);
                 return;
+            }
+
+            // If it's a Supabase storage URL, extract the path from it
+            let finalPath = path;
+            if (path.includes('.supabase.co/storage/v1/object/')) {
+                // Extract bucket and path (e.g., .../public/avatars/path/to/file)
+                const parts = path.split('/avatars/');
+                if (parts.length > 1) {
+                    finalPath = parts[1];
+                }
             }
 
             try {
@@ -29,7 +39,7 @@ export function SecureImage({ path, bucket = 'screenshots', className, ...props 
                 
                 const { data, error: storageError } = await supabase.storage
                     .from(bucket)
-                    .createSignedUrl(path, 3600); // 1 hour expiry
+                    .createSignedUrl(finalPath, 3600); // 1 hour expiry
 
                 if (storageError) throw storageError;
                 if (data?.signedUrl) {

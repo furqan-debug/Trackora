@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { useFavorites } from '../context/FavoritesContext';
 import { getLabelForPath } from '../nav/navModel';
 import { useAuth } from '../context/AuthContext';
+import { SecureImage } from './ui/SecureImage';
 
 export interface HeaderProps {
     /** Called when user taps the mobile menu button (opens sidebar overlay). */
@@ -121,7 +122,12 @@ export function Header({ onOpenMobileMenu, isSidebarCollapsed, onToggleSidebar }
                     >
                         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#506ef8] to-[#3d59e0] flex items-center justify-center text-white text-[13px] font-bold shadow-lg shadow-primary/20 group-hover:scale-105 transition-transform uppercase font-head overflow-hidden">
                             {profile?.avatar_url ? (
-                                <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
+                                <SecureImage 
+                                    path={profile.avatar_url} 
+                                    bucket="avatars" 
+                                    alt="" 
+                                    className="w-full h-full object-cover" 
+                                />
                             ) : (
                                 profile?.full_name?.charAt(0) || user?.email?.charAt(0) || '?'
                             )}
