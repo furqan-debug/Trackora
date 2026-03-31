@@ -7,6 +7,7 @@ import { ActivityChart } from '../components/activity/ActivityChart';
 import { AppUsageList } from '../components/activity/AppUsageList';
 import { ScreenshotGallery } from '../components/activity/ScreenshotGallery';
 import { ScreenshotLightbox } from '../components/activity/ScreenshotLightbox';
+import { calculateActivityScore } from '../lib/dataUtils';
 
 interface ActivitySample {
     id: number;
@@ -88,7 +89,7 @@ export function Activity() {
 
     const totalClicks = samples.reduce((a, b) => a + b.mouse_clicks, 0);
     const totalKeys = samples.reduce((a, b) => a + b.key_presses, 0);
-    const avgActivity = samples.length ? Math.round(samples.reduce((a, b) => a + b.activity_percent, 0) / samples.length) : 0;
+    const avgActivity = calculateActivityScore(samples);
     const activeTime = samples.filter(s => !s.idle).length;
 
     const isToday = selectedDate === new Date().toISOString().split('T')[0];

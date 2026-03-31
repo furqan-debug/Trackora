@@ -9,6 +9,11 @@ import {
 } from 'lucide-react';
 import { PageHeader, Card, KpiCard, LoadingState } from '../components/ui';
 import clsx from 'clsx';
+import { 
+    getEffectiveEnd, 
+    formatDuration, 
+    calculateActivityScore 
+} from '../lib/dataUtils';
 
 interface Session {
     id: string;
@@ -73,11 +78,24 @@ export function Timesheets() {
 
             const { data: activityData, error: activityErr } = await supabase
                 .from('activity_samples')
-                .select('session_id, idle')
+                .select('session_id, idle, activity_percent, recorded_at')
                 .gte('recorded_at', weekStart.toISOString())
                 .lte('recorded_at', weekEnd.toISOString());
 
             if (activityErr) throw activityErr;
+
+            // Map samples to sessions to find the last known activity and for score calculation
+            const lastSampleMap: Record<string, string> = {};
+            const sessionSamplesMap: Record<string, any[]> = {};
+            
+            (activityData || []).forEach(a => {
+                if (!sessionSamplesMap[a.session_id]) sessionSamplesMap[a.session_id] = [];
+                sessionSamplesMap[a.session_id].push(a);
+                
+                if (!lastSampleMap[a.session_id] || a.recorded_at > lastSampleMap[a.session_id]) {
+                    lastSampleMap[a.session_id] = a.recorded_at;
+                }
+            });
 
             const dailyMap: Record<string, DailyEntry> = {};
             for (let i = 0; i < 7; i++) {
@@ -91,26 +109,23 @@ export function Timesheets() {
                 const key = s.started_at.split('T')[0]!;
                 if (!dailyMap[key]) return;
                 dailyMap[key].sessions.push(s as Session);
+                
                 const startMs = new Date(s.started_at).getTime();
-                const { endMs } = effectiveEnd(s.ended_at);
+                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleMap[s.id]);
                 dailyMap[key].totalMinutes += Math.max(0, Math.round((endMs - startMs) / 60000));
             });
 
-            const sessionDay: Record<string, string> = {};
-            (sessions || []).forEach(s => { sessionDay[s.id] = s.started_at.split('T')[0]!; });
+            const result = Object.values(dailyMap).map(d => {
+                // Collect all samples for this day's sessions
+                const daySamples = d.sessions.reduce((acc, s) => {
+                    return acc.concat(sessionSamplesMap[s.id] || []);
+                }, [] as any[]);
 
-            (activityData || []).forEach(a => {
-                const day = sessionDay[a.session_id];
-                if (!day || !dailyMap[day]) return;
-                if (!a.idle) dailyMap[day].activeMinutes++;
+                return {
+                    ...d,
+                    activityPercent: calculateActivityScore(daySamples)
+                };
             });
-
-            const result = Object.values(dailyMap).map(d => ({
-                ...d,
-                activityPercent: d.totalMinutes > 0
-                    ? Math.min(100, Math.round((d.activeMinutes / d.totalMinutes) * 100))
-                    : 0,
-            }));
 
             setEntries(result);
         } catch (error) {
@@ -120,17 +135,6 @@ export function Timesheets() {
             setLoading(false);
         }
     }
-
-    function effectiveEnd(endedAt: string | null) {
-        const endMs = endedAt ? new Date(endedAt).getTime() : Date.now();
-        return { endMs };
-    }
-
-    const fmtHours = (min: number) => {
-        const h = Math.floor(min / 60);
-        const m = min % 60;
-        return `${h}h ${m < 10 ? '0' : ''}${m}m`;
-    };
 
     const weekLabel = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
     const totalMins = entries.reduce((a, e) => a + e.totalMinutes, 0);
@@ -179,7 +183,7 @@ export function Timesheets() {
             } />
             <div className="px-10 space-y-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 animate-in fade-in duration-500">
-                <KpiCard icon={<Timer className="w-5 h-5" />} label="Total Hours" value={loading ? '—' : fmtHours(totalMins)} />
+                <KpiCard icon={<Timer className="w-5 h-5" />} label="Total Hours" value={loading ? '—' : formatDuration(totalMins)} />
                 <KpiCard icon={<BarChart3 className="w-5 h-5" />} label="Avg Activity" value={loading ? '—' : `${avgActivity}%`} />
                 <KpiCard icon={<CheckCircle2 className="w-5 h-5" />} label="Active Days" value={loading ? '—' : entries.filter(e => e.totalMinutes > 0).length + ' / 7 days'} />
                 <KpiCard icon={<Activity className="w-5 h-5" />} label="Total Sessions" value={loading ? '—' : entries.reduce((a, e) => a + e.sessions.length, 0).toString()} />
@@ -234,7 +238,7 @@ export function Timesheets() {
                                     ) : (
                                         <div className="flex flex-col gap-2 flex-1 relative z-10">
                                             <div className="text-3xl font-bold text-text-primary tracking-tight mb-1 group-hover:text-primary transition-colors">
-                                                {fmtHours(entry.totalMinutes)}
+                                                {formatDuration(entry.totalMinutes)}
                                             </div>
                                             <div className="text-[9px] font-bold text-text-muted mb-6 uppercase tracking-wider opacity-70">
                                                 {entry.sessions.length} Work Session{entry.sessions.length !== 1 ? 's' : ''}

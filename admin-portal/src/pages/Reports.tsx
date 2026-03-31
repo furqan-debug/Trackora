@@ -14,6 +14,10 @@ import {
     LoadingState, EmptyState 
 } from '../components/ui';
 import clsx from 'clsx';
+import { 
+    formatDuration, 
+    calculateActivityScore 
+} from '../lib/dataUtils';
 
 const COLORS = ['#506ef8', '#818cf8', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
 const RANGES = ['Today', 'Last 7 Days', 'Last 30 Days'] as const;
@@ -169,11 +173,7 @@ export function Reports() {
             setTotalMins(filteredSamples.length);
             setTotalCosts(Math.round(costs));
             setTotalBilled(Math.round(billed));
-            setAvgActivity(
-                filteredSamples.length > 0
-                    ? Math.round(filteredSamples.reduce((a, b) => a + b.activity_percent, 0) / filteredSamples.length)
-                    : 0
-            );
+            setAvgActivity(calculateActivityScore(filteredSamples));
         } catch (err) {
             console.error("fetchReports unhandled error:", err);
         } finally {
@@ -181,11 +181,7 @@ export function Reports() {
         }
     }
 
-    const fmtHours = (mins: number) => {
-        const h = Math.floor(mins / 60);
-        const m = mins % 60;
-        return `${h}h ${m}m`;
-    };
+    // fmtHours replaced by formatDuration
 
     return (
         <PageLayout
@@ -239,7 +235,7 @@ export function Reports() {
                     <KpiCard
                         icon={<Clock className="w-5 h-5" strokeWidth={2.5} />}
                         label="Total Time"
-                        value={fmtHours(totalMins)}
+                        value={formatDuration(totalMins)}
                         trend="+12%"
                         trendVariant="positive"
                     />

@@ -7,6 +7,10 @@ import {
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from 'recharts';
 import { PageLayout, Card, KpiCard, EmptyState, LoadingState } from './ui';
+import { 
+    getEffectiveEnd, 
+    formatDuration 
+} from '../lib/dataUtils';
 
 interface DashStats {
     todayMinutes: number;
@@ -31,24 +35,7 @@ interface DayBar {
 
 const PROJECT_COLORS = ['#4f46e5', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2'];
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
-
-function effectiveEnd(startedAt: string, endedAt: string | null) {
-    const startMs = new Date(startedAt).getTime();
-    if (endedAt) return { endMs: new Date(endedAt).getTime(), isLive: false, isStale: false };
-
-    const now = Date.now();
-    if (now - startMs > STALE_THRESHOLD_MS) {
-        return { endMs: startMs, isLive: false, isStale: true };
-    }
-    return { endMs: now, isLive: true, isStale: false };
-}
-
-function fmtTime(min: number) {
-    const h = Math.floor(min / 60);
-    const m = min % 60;
-    return h > 0 ? `${h}h ${m < 10 ? '0' : ''}${m}m` : `${m}m`;
-}
+// Shared utils are imported above
 
 export function Dashboard() {
     const [stats, setStats] = useState<DashStats>({
@@ -85,7 +72,7 @@ export function Dashboard() {
 
             const todayMins = todaySessions.reduce((acc, s) => {
                 const start = new Date(s.started_at).getTime();
-                const { endMs } = effectiveEnd(s.started_at, s.ended_at);
+                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at);
                 return acc + Math.max(0, Math.round((endMs - start) / 60000));
             }, 0);
 
@@ -101,7 +88,7 @@ export function Dashboard() {
 
             weekSessions.forEach(s => {
                 const start = new Date(s.started_at).getTime();
-                const { endMs } = effectiveEnd(s.started_at, s.ended_at);
+                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at);
                 const mins = Math.max(0, Math.round((endMs - start) / 60000));
 
                 weekMins += mins;
@@ -172,8 +159,8 @@ export function Dashboard() {
             <div className="flex flex-col gap-10">
                 {/* KPI Row */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-6">
-                    <KpiCard icon={<Clock />} label="Today" value={loading ? '—' : fmtTime(stats.todayMinutes)} />
-                    <KpiCard icon={<BarChart3 />} label="Weekly Total" value={loading ? '—' : fmtTime(stats.weekMinutes)} />
+                    <KpiCard icon={<Clock />} label="Today" value={loading ? '—' : formatDuration(stats.todayMinutes)} />
+                    <KpiCard icon={<BarChart3 />} label="Weekly Total" value={loading ? '—' : formatDuration(stats.weekMinutes)} />
                     <KpiCard icon={<CircleDollarSign />} label="Weekly Cost" value={loading ? '—' : `$${stats.weekCost.toLocaleString()}`} />
                     <KpiCard icon={<Users />} label="Members" value={loading ? '—' : stats.activeMembers.toString()} />
                     <KpiCard icon={<Globe />} label="Projects" value={loading ? '—' : stats.activeProjects.toString()} />
@@ -207,7 +194,7 @@ export function Dashboard() {
                                                             <div className="bg-surface-solid border border-border rounded-xl px-4 py-3 shadow-lg">
                                                                 <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-2 border-b border-border pb-2 opacity-60">{payload[0].payload.day}</p>
                                                                 <div className="flex items-baseline gap-2">
-                                                                    <span className="text-xl font-bold text-text-primary tracking-tight">{fmtTime(payload[0].value as number)}</span>
+                                                                    <span className="text-xl font-bold text-text-primary tracking-tight">{formatDuration(payload[0].value as number)}</span>
                                                                     <span className="text-[9px] font-bold text-primary uppercase tracking-widest">Total</span>
                                                                 </div>
                                                             </div>
@@ -246,7 +233,7 @@ export function Dashboard() {
                                                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.color }} />
                                                     <span className="text-sm font-semibold text-text-primary tracking-tight group-hover:text-primary transition-colors">{p.name}</span>
                                                 </div>
-                                                <span className="text-[10px] font-bold text-text-muted bg-surface-subtle px-2 py-1 rounded-lg border border-border">{fmtTime(p.minutes)}</span>
+                                                <span className="text-[10px] font-bold text-text-muted bg-surface-subtle px-2 py-1 rounded-lg border border-border">{formatDuration(p.minutes)}</span>
                                             </div>
                                             <div className="h-2 bg-surface-subtle rounded-full overflow-hidden border border-border p-[1px]">
                                                 <div
@@ -325,7 +312,7 @@ function RecentSessionsRows() {
                 </thead>
                 <tbody className="divide-y divide-border/40">
                     {sessions.map(s => {
-                        const { endMs, isLive, isStale } = effectiveEnd(s.started_at, s.ended_at);
+                        const { endMs, isLive, isStale } = getEffectiveEnd(s.started_at, s.ended_at);
                         const dur = Math.max(0, Math.round((endMs - new Date(s.started_at).getTime()) / 60000));
                         const mName = memberMap[s.user_id] || 'Unknown User';
                         const proj = projectMap[s.project_id];
@@ -354,7 +341,7 @@ function RecentSessionsRows() {
                                     {new Date(s.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </td>
                                 <td className="px-6 py-5 font-semibold text-text-primary text-sm">
-                                    {fmtTime(dur)}
+                                    {formatDuration(dur)}
                                 </td>
                                 <td className="px-6 py-5 text-right">
                                     {isLive ? (

@@ -10,6 +10,9 @@ import {
     LoadingState, EmptyState 
 } from '../components/ui';
 import clsx from 'clsx';
+import { 
+    getEffectiveEnd
+} from '../lib/dataUtils';
 
 interface DayTotal {
     member: string;
@@ -37,64 +40,78 @@ export function DailyTotals() {
 
     async function fetchDailyTotals() {
         setLoading(true);
-        const start = new Date(weekDates[0]);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(weekDates[6]);
-        end.setHours(23, 59, 59, 999);
+        try {
+            const start = new Date(weekDates[0]);
+            start.setHours(0, 0, 0, 0);
+            const end = new Date(weekDates[6]);
+            end.setHours(23, 59, 59, 999);
 
-        let query = supabase.from('activity_samples')
-            .select('recorded_at, sessions(user_id)')
-            .gte('recorded_at', start.toISOString())
-            .lte('recorded_at', end.toISOString());
-
-        let sessionIdsFilter: string[] | null = null;
-        if (selectedMemberId !== 'all') {
-            const { data: userSessions } = await supabase.from('sessions').select('id').eq('user_id', selectedMemberId);
-            if (!userSessions || userSessions.length === 0) {
-                setData([]);
-                setLoading(false);
-                return;
+            // Fetch members
+            const { data: members } = await supabase.from('members').select('id, full_name');
+            if (members && allMembers.length === 0) {
+                setAllMembers(members);
             }
-            sessionIdsFilter = userSessions.map(s => s.id);
-            query = query.in('session_id', sessionIdsFilter);
+
+            // Fetch sessions
+            let sessQuery = supabase.from('sessions')
+                .select('id, user_id, started_at, ended_at')
+                .gte('started_at', start.toISOString())
+                .lte('started_at', end.toISOString());
+            
+            if (selectedMemberId !== 'all') {
+                sessQuery = sessQuery.eq('user_id', selectedMemberId);
+            }
+            
+            const { data: sessions } = await sessQuery;
+
+            // Fetch samples to find last activity for unclosed sessions
+            const { data: samples } = await supabase.from('activity_samples')
+                .select('session_id, recorded_at')
+                .gte('recorded_at', start.toISOString())
+                .lte('recorded_at', end.toISOString());
+
+            if (members && sessions) {
+                const memberMap: Record<string, string> = {};
+                members.forEach(m => {
+                    memberMap[m.id] = m.full_name;
+                });
+
+                const lastSampleMap: Record<string, string> = {};
+                (samples || []).forEach(s => {
+                    if (!lastSampleMap[s.session_id] || s.recorded_at > lastSampleMap[s.session_id]) {
+                        lastSampleMap[s.session_id] = s.recorded_at;
+                    }
+                });
+
+                const stats: Record<string, number[]> = {};
+                sessions.forEach(s => {
+                    const uid = s.user_id;
+                    if (!uid || !memberMap[uid]) return;
+                    if (!stats[uid]) stats[uid] = Array(7).fill(0);
+
+                    const sDate = new Date(s.started_at);
+                    const dayIdx = (sDate.getDay() + 6) % 7; // Mon=0 ... Sun=6
+
+                    const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleMap[s.id]);
+                    const startMs = new Date(s.started_at).getTime();
+                    const mins = Math.max(0, (endMs - startMs) / 60000);
+                    
+                    stats[uid][dayIdx] += (mins / 60);
+                });
+
+                const result: DayTotal[] = Object.entries(stats).map(([uid, totals]) => ({
+                    member: memberMap[uid],
+                    totals: totals.map(t => Math.round(t * 10) / 10),
+                    weeklyTotal: Math.round(totals.reduce((a, b) => a + b, 0) * 10) / 10
+                })).sort((a, b) => b.weeklyTotal - a.weeklyTotal);
+
+                setData(result);
+            }
+        } catch (err) {
+            console.error("Error fetching daily totals:", err);
+        } finally {
+            setLoading(false);
         }
-
-        const [{ data: members }, { data: samples }] = await Promise.all([
-            supabase.from('members').select('id, full_name'),
-            query
-        ]);
-
-        if (members && allMembers.length === 0) {
-            setAllMembers(members);
-        }
-
-        if (members && samples) {
-            const memberMap: Record<string, string> = {};
-            members.forEach(m => {
-                const key = m.id;
-                memberMap[key] = m.full_name;
-            });
-
-            const stats: Record<string, number[]> = {};
-            samples.forEach((s: any) => {
-                const uid = s.sessions?.user_id;
-                if (!uid || !memberMap[uid]) return;
-                if (!stats[uid]) stats[uid] = Array(7).fill(0);
-
-                const date = new Date(s.recorded_at);
-                const dayIdx = (date.getDay() + 6) % 7; // Mon=0, Tue=1 ... Sun=6
-                stats[uid][dayIdx]++;
-            });
-
-            const result: DayTotal[] = Object.entries(stats).map(([uid, totals]) => ({
-                member: memberMap[uid],
-                totals: totals.map(t => Math.round((t / 60) * 10) / 10), // convert samples to hours
-                weeklyTotal: Math.round((totals.reduce((a, b) => a + b, 0) / 60) * 10) / 10
-            })).sort((a, b) => b.weeklyTotal - a.weeklyTotal);
-
-            setData(result);
-        }
-        setLoading(false);
     }
 
     const fmtDate = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
