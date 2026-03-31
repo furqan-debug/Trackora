@@ -11,10 +11,8 @@ import {
 } from '../components/ui';
 import clsx from 'clsx';
 import { 
-    getEffectiveEnd,
-    flattenTimeRanges
+    calculateActivityScore
 } from '../lib/dataUtils';
-import type { TimeInterval } from '../lib/dataUtils';
 
 interface DayTotal {
     member: string;
@@ -68,7 +66,7 @@ export function DailyTotals() {
 
             // Fetch samples to find last activity for unclosed sessions
             const { data: samples } = await supabase.from('activity_samples')
-                .select('session_id, recorded_at')
+                .select('session_id, recorded_at, idle')
                 .gte('recorded_at', start.toISOString())
                 .lte('recorded_at', end.toISOString());
 
@@ -78,42 +76,20 @@ export function DailyTotals() {
                     memberMap[m.id] = m.full_name;
                 });
 
-                const sessionHasActivity: Record<string, boolean> = {};
-                const lastSampleMap: Record<string, string> = {};
-                (samples || []).forEach(s => {
-                    sessionHasActivity[s.session_id] = true;
-                    if (!lastSampleMap[s.session_id] || s.recorded_at > lastSampleMap[s.session_id]) {
-                        lastSampleMap[s.session_id] = s.recorded_at;
-                    }
-                });
-
-                const userDayIntervals: Record<string, Record<number, TimeInterval[]>> = {};
-
-                sessions.forEach(s => {
-                    const uid = s.user_id;
-                    if (!uid || !memberMap[uid]) return;
-
-                    const sDate = new Date(s.started_at);
-                    const dayIdx = (sDate.getDay() + 6) % 7; // Mon=0 ... Sun=6
-
-                    const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleMap[s.id]);
-                    const startMs = new Date(s.started_at).getTime();
-                    const hasActivity = !!sessionHasActivity[s.id];
-
-                    if (!userDayIntervals[uid]) userDayIntervals[uid] = {};
-                    if (!userDayIntervals[uid][dayIdx]) userDayIntervals[uid][dayIdx] = [];
-                    
-                    userDayIntervals[uid][dayIdx].push({ startMs, endMs, hasActivity });
-                });
+                const sessionToUserId = new Map();
+                (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
 
                 const stats: Record<string, number[]> = {};
-                Object.entries(userDayIntervals).forEach(([uid, days]) => {
-                    stats[uid] = Array(7).fill(0);
-                    Object.entries(days).forEach(([dIdxStr, intervals]) => {
-                        const dIdx = parseInt(dIdxStr);
-                        const flatMins = flattenTimeRanges(intervals);
-                        stats[uid][dIdx] = flatMins / 60;
-                    });
+                
+                (samples || []).forEach(s => {
+                    const uid = sessionToUserId.get(s.session_id);
+                    if (!uid || !memberMap[uid] || s.idle) return;
+
+                    const date = new Date(s.recorded_at);
+                    const dayIdx = (date.getDay() + 6) % 7; // Mon=0 ... Sun=6
+
+                    if (!stats[uid]) stats[uid] = Array(7).fill(0);
+                    stats[uid][dayIdx] += (1 / 60); // Add 1 minute as hours
                 });
 
                 const result: DayTotal[] = Object.entries(stats).map(([uid, totals]) => ({

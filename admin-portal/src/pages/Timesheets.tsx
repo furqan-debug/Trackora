@@ -10,12 +10,9 @@ import {
 import { PageHeader, Card, KpiCard, LoadingState } from '../components/ui';
 import clsx from 'clsx';
 import { 
-    getEffectiveEnd, 
     formatDuration, 
-    calculateActivityScore,
-    flattenTimeRanges
+    calculateActivityScore
 } from '../lib/dataUtils';
-import type { TimeInterval } from '../lib/dataUtils';
 
 interface Session {
     id: string;
@@ -107,43 +104,32 @@ export function Timesheets() {
                 dailyMap[key] = { date: key, sessions: [], totalMinutes: 0, activeMinutes: 0, activityPercent: 0 };
             }
 
-            // Group sessions by day and user for flattening
-            const userDayIntervals: Record<string, Record<string, TimeInterval[]>> = {};
-
+            // Group sessions by day for activity scores
             (sessions || []).forEach(s => {
                 const dayKey = s.started_at.split('T')[0]!;
-                if (!dailyMap[dayKey]) return;
-                dailyMap[dayKey].sessions.push(s as Session);
-                
-                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleMap[s.id]);
-                const startMs = new Date(s.started_at).getTime();
-                const hasActivity = (sessionSamplesMap[s.id] || []).length > 0;
-
-                if (!userDayIntervals[dayKey]) userDayIntervals[dayKey] = {};
-                if (!userDayIntervals[dayKey][s.user_id]) userDayIntervals[dayKey][s.user_id] = [];
-                
-                userDayIntervals[dayKey][s.user_id].push({ startMs, endMs, hasActivity });
+                if (dailyMap[dayKey]) {
+                    dailyMap[dayKey].sessions.push(s as Session);
+                }
             });
 
-            const result = Object.values(dailyMap).map(d => {
-                const dayKey = d.date;
-                let dayTotalMins = 0;
-
-                // Flatten intervals for each user on this day
-                if (userDayIntervals[dayKey]) {
-                    Object.values(userDayIntervals[dayKey]).forEach(intervals => {
-                        dayTotalMins += flattenTimeRanges(intervals);
-                    });
+            // Count Active Minutes per Day (excluding idle)
+            (activityData || []).forEach(a => {
+                if (a.idle) return;
+                const dateKey = a.recorded_at.substring(0, 10);
+                if (dailyMap[dateKey]) {
+                    dailyMap[dateKey].totalMinutes += 1;
+                    dailyMap[dateKey].activeMinutes += 1;
                 }
+            });
 
-                // Collect all samples for this day's sessions
+            // Calculate Activity Score for each day
+            const result = Object.values(dailyMap).map(d => {
                 const daySamples = d.sessions.reduce((acc, s) => {
                     return acc.concat(sessionSamplesMap[s.id] || []);
                 }, [] as any[]);
 
                 return {
                     ...d,
-                    totalMinutes: dayTotalMins,
                     activityPercent: calculateActivityScore(daySamples)
                 };
             });

@@ -133,8 +133,7 @@ export function Reports() {
             // Filter samples for selected members in-memory
             const filteredSamples = allSamples.filter(s => activeSessionIds.has(s.session_id));
 
-            // Group for flattening: [userId][dayKey]
-            const userDayIntervals: Record<string, Record<string, TimeInterval[]>> = {};
+            // Metadata for samples
             const sessionHasActivity: Record<string, boolean> = {};
             const lastSampleAtMap: Record<string, string> = {};
 
@@ -145,68 +144,37 @@ export function Reports() {
                 }
             });
 
-            (sessions || []).forEach(s => {
-                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleAtMap[s.id]);
-                const startMs = new Date(s.started_at).getTime();
-                const hasActivity = !!sessionHasActivity[s.id];
+            const filteredActiveSamples = filteredSamples.filter(s => !s.idle);
+            const totalMinsVal = filteredActiveSamples.length;
 
-                // Split session if it crosses midnight
-                let currentStart = startMs;
-                while (currentStart < endMs) {
-                    const d = new Date(currentStart);
-                    const day = d.toISOString().split('T')[0];
-                    
-                    const nextDay = new Date(d);
-                    nextDay.setHours(24, 0, 0, 0);
-                    const nextDayMs = nextDay.getTime();
-                    
-                    const currentEnd = Math.min(endMs, nextDayMs);
-                    
-                    if (!userDayIntervals[s.user_id]) userDayIntervals[s.user_id] = {};
-                    if (!userDayIntervals[s.user_id][day]) userDayIntervals[s.user_id][day] = [];
-                    
-                    userDayIntervals[s.user_id][day].push({ 
-                        startMs: currentStart, 
-                        endMs: currentEnd, 
-                        hasActivity 
-                    });
-                    
-                    currentStart = currentEnd;
+            let costs = 0;
+            let billed = 0;
+            const dailyMap: Record<string, { active: number; total_samples: number; total_minutes: number }> = {};
+
+            filteredActiveSamples.forEach(s => {
+                const day = s.recorded_at.split('T')[0];
+                if (!dailyMap[day]) dailyMap[day] = { active: 0, total_samples: 0, total_minutes: 0 };
+                dailyMap[day].active++;
+                dailyMap[day].total_minutes++;
+                
+                const m = memberMap.get(sessionToUserId.get(s.session_id));
+                if (m) {
+                    costs += (1 / 60) * (m.pay_rate || 0);
+                    billed += (1 / 60) * (m.bill_rate || 0);
                 }
             });
 
-            let totalMinsVal = 0;
-            let costs = 0;
-            let billed = 0;
-            const dailyMap: Record<string, { total: number; active: number; minutes: number }> = {};
-
-            Object.entries(userDayIntervals).forEach(([uid, days]) => {
-                const m = memberMap.get(uid);
-                Object.entries(days).forEach(([day, intervals]) => {
-                    const flatMins = flattenTimeRanges(intervals);
-                    totalMinsVal += flatMins;
-                    
-                    if (!dailyMap[day]) dailyMap[day] = { total: 0, active: 0, minutes: 0 };
-                    dailyMap[day].minutes += flatMins;
-
-                    if (m) {
-                        costs += (flatMins / 60) * (m.pay_rate || 0);
-                        billed += (flatMins / 60) * (m.bill_rate || 0);
-                    }
-                });
-            });
-
+            // Map total samples (idle + active) for activity %
             filteredSamples.forEach(s => {
-                const day = s.recorded_at.split('T')[0];
-                if (!dailyMap[day]) dailyMap[day] = { total: 0, active: 0, minutes: 0 };
-                dailyMap[day].total++;
-                if (!s.idle) dailyMap[day].active++;
+                 const day = s.recorded_at.split('T')[0];
+                 if (!dailyMap[day]) dailyMap[day] = { active: 0, total_samples: 0, total_minutes: 0 };
+                 dailyMap[day].total_samples++;
             });
 
             setDailyActivity(Object.entries(dailyMap).sort().map(([date, v]) => ({
                 date: new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                activity: v.total > 0 ? Math.round((v.active / v.total) * 100) : 0,
-                minutes: Math.round(v.minutes),
+                activity: v.total_samples > 0 ? Math.round((v.active / v.total_samples) * 100) : 0,
+                minutes: Math.round(v.total_minutes),
             })));
 
             const appMap: Record<string, number> = {};

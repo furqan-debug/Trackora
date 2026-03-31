@@ -324,7 +324,7 @@ export default function App() {
       const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
       weekStart.setHours(0, 0, 0, 0);
 
-      const todayStr = now.toISOString().split('T')[0];
+      const todayStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD local
 
       // Fetch ALL samples for this week
       const { data: samples, error: sampleError } = await sb
