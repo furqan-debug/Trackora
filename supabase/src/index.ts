@@ -331,6 +331,7 @@ app.post('/api/auth/login', async (req, res) => {
                 email: member.email,
                 full_name: member.full_name,
                 role: member.role,
+                organization_id: member.organization_id,
                 pay_rate: member.pay_rate,
                 weekly_limit: member.weekly_limit,
                 daily_limit: member.daily_limit,

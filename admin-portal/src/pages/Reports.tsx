@@ -35,7 +35,7 @@ export function Reports() {
     const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
     const [selectedTeamId, setSelectedTeamId] = useState<string>('All');
     const [members, setMembers] = useState<{ id: string; email: string; full_name: string; pay_rate?: number; bill_rate?: number }[]>([]);
-    const [selectedMemberEmail, setSelectedMemberEmail] = useState<string>('All');
+    const [selectedMemberId, setSelectedMemberId] = useState<string>('All');
 
     useEffect(() => {
         fetchTeams();
@@ -44,7 +44,7 @@ export function Reports() {
 
     useEffect(() => {
         fetchReports();
-    }, [range, selectedTeamId, selectedMemberEmail]);
+    }, [range, selectedTeamId, selectedMemberId]);
 
     async function fetchTeams() {
         const { data } = await supabase.from('teams').select('id, name');
@@ -74,20 +74,16 @@ export function Reports() {
         setLoading(true);
         const { start, end } = getDateRange();
 
-        let emails: string[] = [];
-
-        if (selectedMemberEmail !== 'All') {
-            emails = [selectedMemberEmail];
+        let filteredMemberIds: string[] = [];
+        
+        if (selectedMemberId !== 'All') {
+            filteredMemberIds = [selectedMemberId];
         } else if (selectedTeamId !== 'All') {
             const { data: tm } = await supabase.from('team_members').select('member_id').eq('team_id', selectedTeamId);
-            const memberIds = tm?.map(t => t.member_id) || [];
-            if (memberIds.length > 0) {
-                const { data: m } = await supabase.from('members').select('email').in('id', memberIds);
-                emails = m?.map(x => x.email) || [];
-            }
+            filteredMemberIds = tm?.map(t => t.member_id) || [];
         }
 
-        if ((selectedMemberEmail !== 'All' || selectedTeamId !== 'All') && emails.length === 0) {
+        if ((selectedMemberId !== 'All' || selectedTeamId !== 'All') && filteredMemberIds.length === 0) {
             setDailyActivity([]);
             setAppBreakdown([]);
             setTotalSessions(0);
@@ -104,10 +100,11 @@ export function Reports() {
         let sessionsQuery = supabase.from('sessions').select('id, user_id').gte('started_at', start).lte('started_at', end);
         let ssQuery = supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', start).lte('recorded_at', end);
 
-        if (emails.length > 0) {
-            samplesQuery = samplesQuery.in('user_id', emails);
-            sessionsQuery = sessionsQuery.in('user_id', emails);
-            ssQuery = ssQuery.in('user_id', emails);
+        if (filteredMemberIds.length > 0) {
+            // activity_samples table doesn't have a direct user_id column. 
+            // We filter activity_samples in memory later after fetching sessions.
+            sessionsQuery = sessionsQuery.in('user_id', filteredMemberIds);
+            ssQuery = ssQuery.in('user_id', filteredMemberIds);
         }
 
         try {
@@ -120,25 +117,32 @@ export function Reports() {
             const allSamples = samples || [];
 
             const memberMap = new Map();
-            members.forEach(m => memberMap.set(m.email, m));
+            members.forEach(m => memberMap.set(m.id, m));
 
-            const sessionToUserEmail = new Map();
-            (sessions || []).forEach(s => sessionToUserEmail.set(s.id, s.user_id));
+            const activeSessions = new Set((sessions || []).map(s => s.id));
+            const sessionToUserId = new Map();
+            (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
 
             let costs = 0;
             let billed = 0;
 
             const dailyMap: Record<string, { total: number; active: number }> = {};
-            allSamples.forEach(s => {
+            
+            // Filter samples for selected members in-memory if needed
+            const filteredSamples = filteredMemberIds.length > 0 
+                ? allSamples.filter(s => activeSessions.has(s.session_id))
+                : allSamples;
+
+            filteredSamples.forEach(s => {
                 const day = s.recorded_at.split('T')[0];
                 if (!dailyMap[day]) dailyMap[day] = { total: 0, active: 0 };
                 dailyMap[day].total++;
                 if (!s.idle) dailyMap[day].active++;
 
                 // Sample represents ~1 minute. 1/60th of hourly rate
-                const sEmail = sessionToUserEmail.get(s.session_id);
-                if (sEmail) {
-                    const m = memberMap.get(sEmail);
+                const sUserId = sessionToUserId.get(s.session_id);
+                if (sUserId) {
+                    const m = memberMap.get(sUserId);
                     if (m) {
                         costs += (m.pay_rate || 0) / 60;
                         billed += (m.bill_rate || 0) / 60;
@@ -152,7 +156,7 @@ export function Reports() {
             })));
 
             const appMap: Record<string, number> = {};
-            allSamples.forEach(s => {
+            filteredSamples.forEach(s => {
                 const app = s.app_name || 'Unknown';
                 appMap[app] = (appMap[app] || 0) + 1;
             });
@@ -162,12 +166,12 @@ export function Reports() {
 
             setTotalSessions((sessions || []).length);
             setScreenshotCount(ssCount || 0);
-            setTotalMins(allSamples.length);
+            setTotalMins(filteredSamples.length);
             setTotalCosts(Math.round(costs));
             setTotalBilled(Math.round(billed));
             setAvgActivity(
-                allSamples.length > 0
-                    ? Math.round(allSamples.reduce((a, b) => a + b.activity_percent, 0) / allSamples.length)
+                filteredSamples.length > 0
+                    ? Math.round(filteredSamples.reduce((a, b) => a + b.activity_percent, 0) / filteredSamples.length)
                     : 0
             );
         } catch (err) {
@@ -208,14 +212,14 @@ export function Reports() {
                         <FilterSelect 
                             icon={<Users className="w-4 h-4" />}
                             value={selectedTeamId}
-                            onChange={(val) => { setSelectedTeamId(val); setSelectedMemberEmail('All'); }}
+                            onChange={(val) => { setSelectedTeamId(val); setSelectedMemberId('All'); }}
                             options={[{ id: 'All', name: 'All Teams' }, ...teams]}
                         />
                         <FilterSelect 
                             icon={<ActivityIcon className="w-4 h-4" />}
-                            value={selectedMemberEmail}
-                            onChange={(val) => { setSelectedMemberEmail(val); setSelectedTeamId('All'); }}
-                            options={[{ id: 'All', email: 'All', full_name: 'All Members' }, ...members].map(m => ({ id: (m as any).email || m.id, name: (m as any).full_name || (m as any).name }))}
+                            value={selectedMemberId}
+                            onChange={(val) => { setSelectedMemberId(val); setSelectedTeamId('All'); }}
+                            options={[{ id: 'All', name: 'All Members' }, ...members].map(m => ({ id: m.id, name: (m as any).full_name || (m as any).name || (m as any).email }))}
                         />
                         <Button 
                             variant="secondary" 
