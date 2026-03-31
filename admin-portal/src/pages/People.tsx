@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
     Users, Search, Filter, Download, UserPlus, Trash2,
     ChevronDown, MoreHorizontal, Pencil, RotateCcw,
-    Settings, Shield, User, AlertCircle, CheckCircle
+    Settings, Shield, User, AlertCircle, CheckCircle, MapPin
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
@@ -50,6 +50,7 @@ interface DbMember {
     department: string | null;
     employee_type: string | null;
     timezone: string | null;
+    location: string | null;
     created_at: string;
 }
 
@@ -351,6 +352,7 @@ export function People() {
                                 <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Engagement</th>
                                 <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Rates</th>
                                 <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Limits</th>
+                                <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Location</th>
                                 <th className="px-8 py-5 text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap opacity-80">Status</th>
                                 <th className="pr-10 py-5 text-right text-[11px] font-bold text-text-muted uppercase tracking-widest opacity-80">Actions</th>
                             </tr>
@@ -503,6 +505,16 @@ function MemberRowItem({ m, isSelected, onToggle, onEdit, onResendInvite, onDele
                         <span className="text-text-primary">{m.daily_limit}h</span>
                     </div>
                 </div>
+            </td>
+            <td className="px-8 py-6 text-text-primary">
+                {m.location ? (
+                    <div className="flex items-center gap-2 text-[11px] font-bold whitespace-nowrap">
+                        <MapPin className="w-3 h-3 text-primary" />
+                        {m.location}
+                    </div>
+                ) : (
+                    <span className="text-[10px] font-medium text-text-muted opacity-40 uppercase tracking-widest italic">Unknown</span>
+                )}
             </td>
             <td className="px-8 py-6">
                 <StatusBadge

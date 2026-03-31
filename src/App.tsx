@@ -129,11 +129,51 @@ function saveConsent() {
 }
 
 function formatTime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
+  if (Math.abs(seconds) < 60) return `${Math.round(seconds)}s`;
+  const h = Math.floor(Math.abs(seconds) / 3600);
+  const m = Math.floor((Math.abs(seconds) % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+// ── Clock & Local Context ──────────────────────────────────────────────────
+function LocalClock() {
+  const [now, setNow] = useState(new Date());
+  const [loc, setLoc] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    
+    // Fetch location once
+    fetch('https://ipapi.co/json/')
+      .then(r => r.json())
+      .then(d => {
+        if (d.city && d.country_name) {
+          setLoc(`${d.city}, ${d.country_name}`);
+        }
+      })
+      .catch(() => setLoc(null));
+
+    return () => clearInterval(timer);
+  }, []);
+
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const dateStr = now.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  return (
+    <div className="local-context" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', borderLeft: '1px solid var(--border-light)', paddingLeft: '0.875rem', margin: '0 0.875rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', color: 'var(--text-primary)', fontWeight: 700, fontSize: '0.875rem' }}>
+        <span>{timeStr}</span>
+        <span style={{ fontSize: '0.6875rem', opacity: 0.6, fontWeight: 400 }}>{dateStr}</span>
+      </div>
+      {loc && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.625rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
+          <MapPin size={10} />
+          {loc}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -266,72 +306,64 @@ export default function App() {
   async function fetchDashboardStats(userId: string, currentProjects: Project[]) {
     try {
       const sb = await getSupabase();
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
       
+      // Update location in DB if we have it
+      try {
+        const r = await fetch('https://ipapi.co/json/');
+        const d = await r.json();
+        if (d.city && d.country_name) {
+          const locString = `${d.city}, ${d.country_name}`;
+          await sb.from('members').update({ location: locString }).eq('id', userId);
+        }
+      } catch {}
+
+      const now = new Date();
+      // Start of current week (local Monday)
       const day = now.getDay();
       const diff = (day === 0 ? -6 : 1) - day;
-      const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff).toISOString();
+      const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+      weekStart.setHours(0, 0, 0, 0);
 
-      const { data: sessions } = await sb
-        .from('sessions')
-        .select('id, project_id, started_at, ended_at')
-        .eq('user_id', userId)
-        .or(`started_at.gte.${weekStart},ended_at.gte.${weekStart},ended_at.is.null`);
+      const todayStr = now.toISOString().split('T')[0];
+
+      // Fetch ALL samples for this week
+      const { data: samples, error: sampleError } = await sb
+        .from('activity_samples')
+        .select(`
+          recorded_at,
+          idle,
+          activity_percent,
+          session_id,
+          sessions!inner ( project_id, user_id )
+        `)
+        .eq('sessions.user_id', userId)
+        .gte('recorded_at', weekStart.toISOString());
+
+      if (sampleError) throw sampleError;
 
       const statsMap: Record<string, any> = {};
-      const openSessionsFound: Record<string, boolean> = {};
-
-      const nowTs = Date.now();
-      const weekStartTs = new Date(weekStart).getTime();
-      const todayStartTs = new Date(todayStart).getTime();
-
-      // Sort sessions by started_at descending
-      const sortedSessions = (sessions || []).sort((a: any, b: any) => 
-        new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
-      );
-
-      sortedSessions.forEach((s: any) => {
-        if (!s.project_id) return;
-        if (!statsMap[s.project_id]) {
-          statsMap[s.project_id] = { todaySeconds: 0, weeklySeconds: 0, totalActivity: 0, sampleCount: 0 };
-        }
-
-        const isOpen = !s.ended_at;
-        
-        // Only count the primary open session per project
-        if (isOpen && openSessionsFound[s.project_id]) return;
-        if (isOpen) openSessionsFound[s.project_id] = true;
-
-        const startTs = new Date(s.started_at).getTime();
-        const endTs = s.ended_at ? new Date(s.ended_at).getTime() : nowTs;
-        
-        // Calculate portion belonging to this week
-        const overlapWeekStart = Math.max(startTs, weekStartTs);
-        const durationWeek = Math.max(0, Math.round((endTs - overlapWeekStart) / 1000));
-        statsMap[s.project_id].weeklySeconds += durationWeek;
-
-        // Calculate portion belonging to today
-        const overlapTodayStart = Math.max(startTs, todayStartTs);
-        const durationToday = Math.max(0, Math.round((endTs - overlapTodayStart) / 1000));
-        statsMap[s.project_id].todaySeconds += durationToday;
+      currentProjects.forEach(p => {
+        statsMap[p.id] = { todaySeconds: 0, weeklySeconds: 0, totalActivity: 0, sampleCount: 0 };
       });
 
-      const sessionIds = (sessions || []).map((s: any) => s.id);
-      if (sessionIds.length > 0) {
-        const { data: samples } = await sb
-          .from('activity_samples')
-          .select('session_id, activity_percent')
-          .in('session_id', sessionIds);
+      (samples || []).forEach((samp: any) => {
+        const pid = samp.sessions?.project_id;
+        if (!pid || !statsMap[pid]) return;
 
-        (samples || []).forEach((samp: any) => {
-          const sess = sessions?.find((s: any) => s.id === samp.session_id);
-          if (sess?.project_id && statsMap[sess.project_id]) {
-            statsMap[sess.project_id].totalActivity += (samp.activity_percent ?? 0);
-            statsMap[sess.project_id].sampleCount++;
-          }
-        });
-      }
+        // "Show active time not idle" - skip idle samples
+        if (samp.idle) return;
+
+        const dateStr = new Date(samp.recorded_at).toLocaleDateString('en-CA'); // YYYY-MM-DD local
+
+        // Every sample represents 1 minute (60s) of active time
+        statsMap[pid].weeklySeconds += 60;
+        if (dateStr === todayStr) {
+          statsMap[pid].todaySeconds += 60;
+        }
+
+        statsMap[pid].totalActivity += (samp.activity_percent ?? 0);
+        statsMap[pid].sampleCount++;
+      });
 
       const updatedProjects = currentProjects.map(p => ({
         ...p,
@@ -960,6 +992,7 @@ function Topbar({ user, onLogout, onSettings, todoBadge }: { user?: User; onLogo
         </div>
         <span className="topbar-title">Trackora</span>
       </div>
+      {user && <LocalClock />}
       {user && onLogout && (
         <div className="topbar-actions">
           {todoBadge != null && todoBadge > 0 && (
