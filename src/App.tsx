@@ -277,12 +277,16 @@ export default function App() {
         .from('sessions')
         .select('id, project_id, started_at, ended_at')
         .eq('user_id', userId)
-        .gte('started_at', weekStart);
+        .or(`started_at.gte.${weekStart},ended_at.gte.${weekStart},ended_at.is.null`);
 
       const statsMap: Record<string, any> = {};
       const openSessionsFound: Record<string, boolean> = {};
 
-      // Sort sessions by started_at descending so we process the latest ones first
+      const nowTs = Date.now();
+      const weekStartTs = new Date(weekStart).getTime();
+      const todayStartTs = new Date(todayStart).getTime();
+
+      // Sort sessions by started_at descending
       const sortedSessions = (sessions || []).sort((a: any, b: any) => 
         new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
       );
@@ -295,18 +299,22 @@ export default function App() {
 
         const isOpen = !s.ended_at;
         
-        // If this is an open session and we already found one for this project, ignore it (it's orphaned)
+        // Only count the primary open session per project
         if (isOpen && openSessionsFound[s.project_id]) return;
         if (isOpen) openSessionsFound[s.project_id] = true;
 
-        const start = new Date(s.started_at).getTime();
-        const end = s.ended_at ? new Date(s.ended_at).getTime() : Date.now();
-        const duration = Math.max(0, Math.round((end - start) / 1000));
+        const startTs = new Date(s.started_at).getTime();
+        const endTs = s.ended_at ? new Date(s.ended_at).getTime() : nowTs;
         
-        statsMap[s.project_id].weeklySeconds += duration;
-        if (new Date(s.started_at) >= new Date(todayStart)) {
-          statsMap[s.project_id].todaySeconds += duration;
-        }
+        // Calculate portion belonging to this week
+        const overlapWeekStart = Math.max(startTs, weekStartTs);
+        const durationWeek = Math.max(0, Math.round((endTs - overlapWeekStart) / 1000));
+        statsMap[s.project_id].weeklySeconds += durationWeek;
+
+        // Calculate portion belonging to today
+        const overlapTodayStart = Math.max(startTs, todayStartTs);
+        const durationToday = Math.max(0, Math.round((endTs - overlapTodayStart) / 1000));
+        statsMap[s.project_id].todaySeconds += durationToday;
       });
 
       const sessionIds = (sessions || []).map((s: any) => s.id);
