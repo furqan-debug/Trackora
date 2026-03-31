@@ -443,7 +443,9 @@ pub fn run() {
                     let state = app_handle_watcher.state::<Mutex<AppState>>();
                     let (monitoring, limit) = {
                         let s = state.lock().unwrap();
-                        (*s.is_idle_monitoring.lock().unwrap(), *s.last_idle_limit.lock().unwrap())
+                        let monitoring = *s.is_idle_monitoring.lock().unwrap();
+                        let limit = *s.last_idle_limit.lock().unwrap();
+                        (monitoring, limit)
                     };
 
                     if monitoring {
@@ -490,7 +492,7 @@ pub fn run() {
             stop_idle_monitoring,
         ])
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api: _api, .. } = event {
                 // When 'X' is clicked, try to stop tracking
                 let state_handle = window.state::<Mutex<AppState>>();
                 let (cfg, token, session_id, running) = {
