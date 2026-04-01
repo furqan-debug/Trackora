@@ -349,20 +349,40 @@ export default function App() {
       });
       const todayStr = fmt.format(now); 
 
-      // Fetch ALL samples for this week
-      const { data: samples, error: sampleError } = await sb
-        .from('activity_samples')
-        .select(`
-          recorded_at,
-          idle,
-          activity_percent,
-          session_id,
-          sessions!inner ( project_id, user_id )
-        `)
-        .eq('sessions.user_id', userId)
-        .gte('recorded_at', weekStart.toISOString());
+      // Fetch ALL samples for this week (Paginated to bypass 1000 row limit)
+      let allSamples: any[] = [];
+      const PAGE_SIZE = 1000;
+      let hasMore = true;
+      let page = 0;
 
-      if (sampleError) throw sampleError;
+      while (hasMore && page < 50) { // Safety limit 50k
+        const { data: _samples, error: _sampleError } = await sb
+          .from('activity_samples')
+          .select(`
+            recorded_at,
+            idle,
+            activity_percent,
+            session_id,
+            sessions!inner ( project_id, user_id )
+          `)
+          .eq('sessions.user_id', userId)
+          .gte('recorded_at', weekStart.toISOString())
+          .order('recorded_at', { ascending: true })
+          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+        if (_sampleError) throw _sampleError;
+
+        if (_samples && _samples.length > 0) {
+          allSamples.push(..._samples);
+        }
+
+        if (!_samples || _samples.length < PAGE_SIZE) {
+          hasMore = false;
+        }
+        page++;
+      }
+
+      const samples = allSamples;
 
       const statsMap: Record<string, any> = {};
       currentProjects.forEach(p => {

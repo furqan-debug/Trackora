@@ -11,7 +11,8 @@ import {
 } from '../components/ui';
 import clsx from 'clsx';
 import { 
-    getDayIndexInTz
+    getDayIndexInTz,
+    fetchAllActivitySamples
 } from '../lib/dataUtils';
 
 interface DayTotal {
@@ -64,10 +65,12 @@ export function DailyTotals() {
             const { data: sessions } = await sessQuery;
 
             // Fetch samples
-            const { data: samples } = await supabase.from('activity_samples')
-                .select('session_id, recorded_at, idle, activity_percent')
-                .gte('recorded_at', start.toISOString())
-                .lte('recorded_at', end.toISOString());
+            const samples = await fetchAllActivitySamples(
+                supabase,
+                start.toISOString(),
+                end.toISOString(),
+                'session_id, recorded_at, idle, activity_percent'
+            );
 
             if (members && sessions) {
                 const memberMap: Record<string, {name: string, tz: string | null}> = {};

@@ -12,7 +12,8 @@ import clsx from 'clsx';
 import { 
     formatDuration, 
     calculateActivityScore,
-    getGroupingDateInTz
+    getGroupingDateInTz,
+    fetchAllActivitySamples
 } from '../lib/dataUtils';
 
 interface Session {
@@ -78,13 +79,13 @@ export function Timesheets() {
             const { data: sessions, error: sessionErr } = await query;
             if (sessionErr) throw sessionErr;
 
-            const { data: activityData, error: activityErr } = await supabase
-                .from('activity_samples')
-                .select('session_id, idle, activity_percent, recorded_at')
-                .gte('recorded_at', weekStart.toISOString())
-                .lte('recorded_at', weekEnd.toISOString());
-
-            if (activityErr) throw activityErr;
+            // Fetch all samples using the pagination helper
+            const activityData = await fetchAllActivitySamples(
+                supabase,
+                weekStart.toISOString(),
+                weekEnd.toISOString(),
+                'session_id, recorded_at, idle, activity_percent'
+            );
 
             // Map samples to sessions to find the last known activity and for score calculation
             const lastSampleMap: Record<string, string> = {};

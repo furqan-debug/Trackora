@@ -318,3 +318,45 @@ export function calculateProductiveMinutes(samples: any[], keepIdle: boolean = t
     return samples.filter(s => s.activity_percent === null || s.activity_percent > 0).length;
 }
 
+/**
+ * Fetches activity samples while bypassing the standard 1000-row API limit.
+ * Uses range pagination to retrieve all samples within a given time window.
+ */
+export async function fetchAllActivitySamples(
+    supabase: any,
+    startIso: string,
+    endIso: string,
+    selectQuery: string = '*'
+): Promise<any[]> {
+    let allSamples: any[] = [];
+    const PAGE_SIZE = 1000;
+    const MAX_PAGES = 100; // 100k samples max safety limit
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+        const { data, error } = await supabase
+            .from('activity_samples')
+            .select(selectQuery)
+            .gte('recorded_at', startIso)
+            .lte('recorded_at', endIso)
+            .order('recorded_at', { ascending: true })
+            .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+        if (error) {
+            console.error("Error fetching paginated samples:", error);
+            break;
+        }
+        
+        if (!data || data.length === 0) {
+            break;
+        }
+
+        allSamples.push(...data);
+
+        if (data.length < PAGE_SIZE) {
+            break; // Fetched the last partial page
+        }
+    }
+
+    return allSamples;
+}
+

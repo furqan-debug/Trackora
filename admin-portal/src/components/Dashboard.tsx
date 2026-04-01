@@ -8,9 +8,10 @@ import {
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from 'recharts';
 import { PageLayout, Card, KpiCard, EmptyState, LoadingState } from './ui';
 import { 
-    getEffectiveEnd, 
+    getEffectiveEnd,
     formatDuration,
-    flattenTimeRanges
+    flattenTimeRanges,
+    fetchAllActivitySamples
 } from '../lib/dataUtils';
 import type { TimeInterval } from '../lib/dataUtils';
 
@@ -60,17 +61,18 @@ export function Dashboard() {
                 { data: rawSessions },
                 { data: projectsData },
                 { data: membersData },
-                { data: activityData },
+                activityDataRaw,
                 { count: ssCount },
             ] = await Promise.all([
                 supabase.from('sessions').select('id, user_id, project_id, started_at, ended_at'),
                 supabase.from('projects').select('id, name, color'),
                 supabase.from('members').select('id, pay_rate'),
-                supabase.from('activity_samples').select('session_id, recorded_at').gte('recorded_at', weekStart.toISOString()),
+                fetchAllActivitySamples(supabase, weekStart.toISOString(), now.toISOString(), 'session_id, recorded_at'),
                 supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', weekStart.toISOString()),
             ]);
 
             // Map samples to sessions for activity filtering
+            const activityData = activityDataRaw;
             const sessionHasActivity: Record<string, boolean> = {};
             const lastSampleAtMap: Record<string, string> = {};
             (activityData || []).forEach(a => {

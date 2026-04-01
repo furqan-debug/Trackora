@@ -17,7 +17,8 @@ import clsx from 'clsx';
 import { 
     formatDuration, 
     calculateActivityScore,
-    getGroupingDateInTz
+    getGroupingDateInTz,
+    fetchAllActivitySamples
 } from '../lib/dataUtils';
 
 const COLORS = ['#506ef8', '#818cf8', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
@@ -101,7 +102,6 @@ export function Reports() {
             return;
         }
 
-        let samplesQuery = supabase.from('activity_samples').select('*').gte('recorded_at', start).lte('recorded_at', end);
         let sessionsQuery = supabase.from('sessions').select('id, user_id, started_at, ended_at').lt('started_at', end).or(`ended_at.is.null,ended_at.gt.${start}`);
         let ssQuery = supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', start).lte('recorded_at', end);
 
@@ -111,8 +111,8 @@ export function Reports() {
         }
 
         try {
-            const [{ data: samples }, { data: sessions }, { count: ssCount }] = await Promise.all([
-                samplesQuery,
+            const [samples, { data: sessions }, { count: ssCount }] = await Promise.all([
+                fetchAllActivitySamples(supabase, start, end, 'session_id, recorded_at, activity_percent, idle, app_name'),
                 sessionsQuery,
                 ssQuery,
             ]);
