@@ -11,6 +11,15 @@ export interface TimeInterval {
     hasActivity: boolean;
 }
 
+export interface HubstaffBlock {
+    id: string; // block identifier (e.g. "2024-03-20T09:00")
+    startTime: string;
+    endTime: string;
+    minutesTracked: number;
+    activityPercent: number;
+    isIdle: boolean;
+}
+
 /**
  * Calculates a "safe" end time for a session.
  * Handles "ghost" sessions (unended sessions from the past) by capping them.
@@ -192,15 +201,27 @@ export function getGroupingDateInTz(date: string | Date | number, targetTz?: str
     const d = new Date(date);
     if (isNaN(d.getTime())) return '';
     try {
-        // use en-CA for YYYY-MM-DD format natively
-        const parts = d.toLocaleDateString('en-CA', { timeZone: targetTz || undefined }).split('-');
-        if (parts.length === 3) {
-            // en-CA format is YYYY-MM-DD
-            return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        const formatter = new Intl.DateTimeFormat('en-CA', {
+            timeZone: targetTz || undefined,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        });
+        const parts = formatter.formatToParts(d);
+        const year = parts.find(p => p.type === 'year')?.value;
+        const month = parts.find(p => p.type === 'month')?.value;
+        const day = parts.find(p => p.type === 'day')?.value;
+        if (year && month && day) {
+            return `${year}-${month}-${day}`;
         }
-        return d.toLocaleDateString('en-CA');
     } catch (e) {
-        return d.toLocaleDateString('en-CA');
+        // Fallback
+    }
+    // Fallback using en-CA directly if parts fail
+    try {
+        return d.toLocaleDateString('en-CA', { timeZone: targetTz || undefined });
+    } catch (e) {
+        return d.toISOString().split('T')[0];
     }
 }
 
@@ -209,17 +230,91 @@ export function getGroupingDateInTz(date: string | Date | number, targetTz?: str
  */
 export function getDayIndexInTz(date: string | Date | number, targetTz?: string | null): number {
     const d = new Date(date);
-    let day = d.getDay(); // Local day as fallback
     try {
-        // Extract day string 'Mon', 'Tue' etc using the timezone
+        // Extract day string 'Sun', 'Mon' etc using the timezone
         const dayStr = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: targetTz || undefined });
-        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const index = days.indexOf(dayStr);
         if (index !== -1) return index;
-        // Fallback to local
-        return (day + 6) % 7; 
+        return d.getDay();
     } catch (e) {
-        return (day + 6) % 7;
+        return d.getDay();
     }
+}
+
+/**
+ * Hubstaff Logic: Groups samples into 10-minute blocks.
+ */
+export function getHubstaffBlocks(samples: any[], targetTz?: string | null): HubstaffBlock[] {
+    const blocks: Map<string, any[]> = new Map();
+
+    samples.forEach(s => {
+        const date = new Date(s.recorded_at);
+        
+        // Convert to target timezone for grouping if provided
+        let localizedDate = date;
+        if (targetTz) {
+            try {
+                // This is a simple way to get the localized minutes/hours
+                const tzString = date.toLocaleString('en-US', { timeZone: targetTz });
+                localizedDate = new Date(tzString);
+            } catch (e) {
+                // Fallback to original date
+            }
+        }
+
+        const minutes = localizedDate.getMinutes();
+        const blockStartMin = Math.floor(minutes / 10) * 10;
+        
+        const blockKey = new Date(localizedDate);
+        blockKey.setMinutes(blockStartMin, 0, 0);
+        blockKey.setSeconds(0, 0);
+        
+        // Use a stable key for grouping
+        const key = blockKey.toISOString().substring(0, 16);
+
+        if (!blocks.has(key)) blocks.set(key, []);
+        blocks.get(key)!.push(s);
+    });
+
+    const result: HubstaffBlock[] = [];
+    const sortedKeys = Array.from(blocks.keys()).sort();
+
+    sortedKeys.forEach(key => {
+        const blockSamples = blocks.get(key)!;
+        const totalActivity = blockSamples.reduce((acc, s) => acc + (s.activity_percent || 0), 0);
+        const avgActivity = Math.round(totalActivity / blockSamples.length);
+        
+        // Duration is number of 1-minute samples in this block
+        const minutes = blockSamples.length;
+
+        const start = new Date(key);
+        const end = new Date(start.getTime() + 10 * 60000);
+
+        result.push({
+            id: key,
+            startTime: start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
+            endTime: end.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
+            minutesTracked: minutes,
+            activityPercent: avgActivity,
+            isIdle: avgActivity === 0
+        });
+    });
+
+    return result;
+}
+
+/**
+ * Calculates total productive minutes based on Hubstaff logic.
+ * If keepIdle is false, blocks/minutes with 0% activity are discarded.
+ */
+export function calculateProductiveMinutes(samples: any[], keepIdle: boolean = true): number {
+    if (keepIdle) {
+        return samples.length; // Each sample is 1 minute
+    }
+    
+    // Discard samples where activity is confirmed 0
+    // If activity_percent is null (version mismatch/old tracker), treat as productive
+    return samples.filter(s => s.activity_percent === null || s.activity_percent > 0).length;
 }
 

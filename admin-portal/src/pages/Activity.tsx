@@ -3,11 +3,11 @@ import { supabase } from '../lib/supabase';
 import { Mouse, Keyboard, Activity as ActivityIcon, Zap, Users, Calendar, Diamond, ChevronDown, Monitor } from 'lucide-react';
 import { PageLayout, KpiCard, FilterSelect, Card } from '../components/ui';
 
-import { ActivityChart } from '../components/activity/ActivityChart';
 import { AppUsageList } from '../components/activity/AppUsageList';
 import { ScreenshotGallery } from '../components/activity/ScreenshotGallery';
 import { ScreenshotLightbox } from '../components/activity/ScreenshotLightbox';
-import { calculateActivityScore } from '../lib/dataUtils';
+import { TimelineGrid } from '../components/activity/TimelineGrid';
+import { calculateActivityScore, calculateProductiveMinutes } from '../lib/dataUtils';
 
 interface ActivitySample {
     id: number;
@@ -31,12 +31,14 @@ interface Screenshot {
 interface MemberInfo {
     id: string;
     full_name: string;
+    timezone?: string;
+    keep_idle?: boolean;
 }
 
 export function Activity() {
     const [samples, setSamples] = useState<ActivitySample[]>([]);
     const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]!);
     const [enlarged, setEnlarged] = useState<Screenshot | null>(null);
     const [members, setMembers] = useState<MemberInfo[]>([]);
@@ -44,7 +46,7 @@ export function Activity() {
     const dateInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
-        supabase.from('members').select('id, full_name').eq('status', 'Active').then(({ data }) => {
+        supabase.from('members').select('id, full_name, timezone, keep_idle').eq('status', 'Active').then(({ data }) => {
             if (data) setMembers(data);
         });
     }, []);
@@ -89,7 +91,7 @@ export function Activity() {
 
     // Deduplicate samples by minute to avoid double-counting in KPIs if sessions overlap
     const uniqueMinMap = new Map<string, ActivitySample>();
-    samples.forEach(s => {
+    samples.forEach((s: ActivitySample) => {
         const minKey = s.recorded_at.substring(0, 16); // YYYY-MM-DDTHH:mm
         if (!uniqueMinMap.has(minKey)) {
             uniqueMinMap.set(minKey, s);
@@ -103,11 +105,17 @@ export function Activity() {
     });
 
     const uniqueSamples = Array.from(uniqueMinMap.values());
+    
+    // Hubstaff productive time calculation
+    const selectedMember = members.find(m => m.id === selectedMemberId);
+    const keepIdle = selectedMember?.keep_idle ?? true;
+    
     const totalClicks = uniqueSamples.reduce((a, b) => a + b.mouse_clicks, 0);
     const totalKeys = uniqueSamples.reduce((a, b) => a + b.key_presses, 0);
     const avgActivity = calculateActivityScore(uniqueSamples);
-    const activeTime = uniqueSamples.filter(s => !s.idle).length;
-
+    
+    const productiveMinutes = calculateProductiveMinutes(uniqueSamples, keepIdle);
+    
     const isToday = selectedDate === new Date().toISOString().split('T')[0];
     const dateLabel = isToday ? 'Live Timeline' : new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
@@ -147,8 +155,8 @@ export function Activity() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12 animate-in fade-in duration-500">
                 <KpiCard icon={<Mouse className="w-6 h-6" />} label="Mouse Clicks" value={totalClicks.toLocaleString()} />
                 <KpiCard icon={<Keyboard className="w-6 h-6" />} label="Keyboard Usage" value={totalKeys.toLocaleString()} />
-                <KpiCard icon={<ActivityIcon className="w-6 h-6" />} label="Active Time" value={`${activeTime} min`} />
-                <KpiCard icon={<Zap className="w-6 h-6" />} label="Activity Rate" value={`${avgActivity}%`} />
+                <KpiCard icon={<ActivityIcon className="w-6 h-6" />} label="Billable Time" value={`${productiveMinutes} min`} />
+                <KpiCard icon={<Zap className="w-6 h-6" />} label="Avg Activity" value={`${avgActivity}%`} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
@@ -166,7 +174,7 @@ export function Activity() {
                         </div>
                     </div>
                     <div className="p-8">
-                        <ActivityChart loading={loading} samples={samples} />
+                        <TimelineGrid samples={uniqueSamples} targetTz={selectedMember?.timezone} />
                     </div>
                 </Card>
                 

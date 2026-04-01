@@ -34,6 +34,7 @@ interface MemberInfo {
     id: string;
     full_name: string;
     timezone?: string;
+    keep_idle?: boolean;
 }
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -57,7 +58,7 @@ export function Timesheets() {
     useEffect(() => { fetchTimesheets(); }, [weekOffset, selectedMember]);
 
     async function fetchMembers() {
-        const { data } = await supabase.from('members').select('id, full_name, timezone').order('full_name');
+        const { data } = await supabase.from('members').select('id, full_name, timezone, keep_idle').order('full_name');
         setMembers(data as MemberInfo[] || []);
     }
 
@@ -66,8 +67,8 @@ export function Timesheets() {
         try {
             let query = supabase.from('sessions')
                 .select('id, user_id, started_at, ended_at')
-                .gte('started_at', weekStart.toISOString())
-                .lte('started_at', weekEnd.toISOString())
+                .lt('started_at', weekEnd.toISOString())
+                .or(`ended_at.is.null,ended_at.gt.${weekStart.toISOString()}`)
                 .order('started_at', { ascending: true });
 
             if (selectedMember !== 'all') {
@@ -102,7 +103,11 @@ export function Timesheets() {
             (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
 
             const memberTzMap: Record<string, string | undefined> = {};
-            members.forEach(m => { memberTzMap[m.id] = m.timezone; });
+            const memberKeepIdleMap: Record<string, boolean> = {};
+            members.forEach(m => { 
+                memberTzMap[m.id] = m.timezone; 
+                memberKeepIdleMap[m.id] = m.keep_idle ?? true;
+            });
 
             const dailyMap: Record<string, DailyEntry> = {};
             const selectedTz = selectedMember !== 'all' ? members.find(m => m.id === selectedMember)?.timezone : undefined;
@@ -125,9 +130,15 @@ export function Timesheets() {
 
             // Count Active Minutes per Day
             (activityData || []).forEach(a => {
-                if (a.idle) return;
                 const uid = sessionToUserId.get(a.session_id);
-                const memberTz = uid ? memberTzMap[uid] : undefined;
+                if (!uid) return;
+                
+                const keepIdle = memberKeepIdleMap[uid];
+                // Only filter if keepIdle is FALSE and activity is DEFINITELY 0
+                // If activity_percent is null, it's from an older tracker - keep it.
+                if (keepIdle === false && a.activity_percent === 0) return;
+
+                const memberTz = memberTzMap[uid];
                 const dateKey = getGroupingDateInTz(a.recorded_at, memberTz || selectedTz);
                 if (dailyMap[dateKey]) {
                     dailyMap[dateKey].totalMinutes += 1;

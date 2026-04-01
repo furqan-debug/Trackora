@@ -25,7 +25,7 @@ export function DailyTotals() {
     const [data, setData] = useState<DayTotal[]>([]);
     const [weekOffset, setWeekOffset] = useState(0);
     const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
-    const [allMembers, setAllMembers] = useState<{ id: string; full_name: string; timezone?: string }[]>([]);
+    const [allMembers, setAllMembers] = useState<{ id: string; full_name: string; timezone?: string; keep_idle?: boolean }[]>([]);
 
     const weekDates = Array.from({ length: 7 }, (_, i) => {
         const d = new Date();
@@ -47,16 +47,15 @@ export function DailyTotals() {
             end.setHours(23, 59, 59, 999);
 
             // Fetch members
-            const { data: members } = await supabase.from('members').select('id, full_name, timezone');
+            const { data: members } = await supabase.from('members').select('id, full_name, timezone, keep_idle');
             if (members && allMembers.length === 0) {
                 setAllMembers(members);
             }
 
-            // Fetch sessions
             let sessQuery = supabase.from('sessions')
                 .select('id, user_id, started_at, ended_at')
-                .gte('started_at', start.toISOString())
-                .lte('started_at', end.toISOString());
+                .lt('started_at', end.toISOString())
+                .or(`ended_at.is.null,ended_at.gt.${start.toISOString()}`);
             
             if (selectedMemberId !== 'all') {
                 sessQuery = sessQuery.eq('user_id', selectedMemberId);
@@ -64,9 +63,9 @@ export function DailyTotals() {
             
             const { data: sessions } = await sessQuery;
 
-            // Fetch samples to find last activity for unclosed sessions
+            // Fetch samples
             const { data: samples } = await supabase.from('activity_samples')
-                .select('session_id, recorded_at, idle')
+                .select('session_id, recorded_at, idle, activity_percent')
                 .gte('recorded_at', start.toISOString())
                 .lte('recorded_at', end.toISOString());
 
@@ -79,16 +78,28 @@ export function DailyTotals() {
                 const sessionToUserId = new Map();
                 (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
 
+                const memberSettingsMap: Record<string, boolean> = {};
+                members.forEach(m => {
+                    memberSettingsMap[m.id] = m.keep_idle ?? true;
+                });
+
                 const stats: Record<string, number[]> = {};
                 
                 (samples || []).forEach(s => {
                     const uid = sessionToUserId.get(s.session_id);
-                    if (!uid || !memberMap[uid] || s.idle) return;
+                    if (!uid || !memberMap[uid]) return;
 
-                    const dayIdx = getDayIndexInTz(s.recorded_at, memberMap[uid].tz);
+                    const keepIdle = memberSettingsMap[uid];
+                    // If keepIdle is explicitly false, filter out definitive 0 activity
+                    if (keepIdle === false && s.activity_percent === 0) return;
+
+                    const dayIdxRaw = getDayIndexInTz(s.recorded_at, memberMap[uid].tz);
+                    // Match to UI columns (MON=0, TUE=1 ... SUN=6)
+                    const dayIdx = (dayIdxRaw + 6) % 7; 
 
                     if (!stats[uid]) stats[uid] = Array(7).fill(0);
-                    stats[uid][dayIdx] += (1 / 60); // Add 1 minute as hours
+                    
+                    stats[uid][dayIdx] += (1 / 60); // Add 1 minute as hour increment
                 });
 
                 const result: DayTotal[] = Object.entries(stats).map(([uid, totals]) => ({

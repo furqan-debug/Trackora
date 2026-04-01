@@ -63,6 +63,7 @@ export function MemberFormPage() {
     const [nickname, setNickname] = useState('');
     const [idleEnabled, setIdleEnabled] = useState(true);
     const [idleLimit, setIdleLimit] = useState('10');
+    const [keepIdle, setKeepIdle] = useState(true);
     const [trackingEnabled, setTrackingEnabled] = useState(true);
     const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
@@ -108,6 +109,7 @@ export function MemberFormPage() {
                 setNickname(data.nickname || '');
                 setIdleEnabled(data.idle_enabled ?? true);
                 setIdleLimit(data.idle_limit?.toString() || '10');
+                setKeepIdle(data.keep_idle ?? true);
                 setTrackingEnabled(data.tracking_enabled ?? true);
                 setAvatarUrl(data.avatar_url || null);
             }
@@ -150,6 +152,7 @@ export function MemberFormPage() {
                 nickname: nickname,
                 idle_enabled: idleEnabled,
                 idle_limit: parseInt(idleLimit) || 10,
+                keep_idle: keepIdle,
                 tracking_enabled: trackingEnabled,
             };
 
@@ -426,6 +429,25 @@ export function MemberFormPage() {
                                             <div className={clsx(
                                                 "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
                                                 idleEnabled ? 'left-7' : 'left-1'
+                                            )} />
+                                        </button>
+                                    </div>
+
+                                    <div className="flex items-center justify-between p-6 bg-surface-subtle border border-border rounded-2xl">
+                                        <div>
+                                            <label className="text-sm font-bold text-text-primary block">Keep Idle Time</label>
+                                            <p className="text-[11px] text-text-muted font-medium mt-1">Include 0% activity blocks in billable total (Hubstaff Logic)</p>
+                                        </div>
+                                        <button
+                                            onClick={() => setKeepIdle(!keepIdle)}
+                                            className={clsx(
+                                                "relative w-12 h-6 rounded-full transition-all duration-300",
+                                                keepIdle ? 'bg-emerald-500' : 'bg-border'
+                                            )}
+                                        >
+                                            <div className={clsx(
+                                                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                                                keepIdle ? 'left-7' : 'left-1'
                                             )} />
                                         </button>
                                     </div>
