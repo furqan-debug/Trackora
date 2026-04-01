@@ -417,18 +417,30 @@ export default function App() {
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
 
+      // Identify the latest active session (if any) to prevent ghost session duplication
+      const activeSessions = (sessionData || []).filter((s: any) => !s.ended_at);
+      const latestActiveSessionId = activeSessions.length > 0 
+        ? activeSessions.sort((a: any, b: any) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0].id
+        : null;
+
       sessionData?.forEach((s: any) => {
           const pId = s.project_id;
           if (!statsMap[pId]) return;
-          const startedAt = new Date(s.started_at).getTime();
-          const endedAt = s.ended_at ? new Date(s.ended_at).getTime() : nowMs;
-          
-          if (endedAt > startOfToday.getTime()) {
-              const effectiveStart = Math.max(startedAt, startOfToday.getTime());
-              const durSeconds = Math.floor((endedAt - effectiveStart) / 1000);
-              statsMap[pId].rawTodaySeconds += durSeconds;
+
+          // Only count the session if it's either ended OR it's the very latest active session
+          if (s.ended_at || s.id === latestActiveSessionId) {
+              const startedAt = new Date(s.started_at).getTime();
+              const endedAt = s.ended_at ? new Date(s.ended_at).getTime() : nowMs;
+              
+              if (endedAt > startOfToday.getTime()) {
+                  const effectiveStart = Math.max(startedAt, startOfToday.getTime());
+                  const durSeconds = Math.floor((endedAt - effectiveStart) / 1000);
+                  statsMap[pId].rawTodaySeconds += durSeconds;
+              }
           }
       });
+
+
 
       const seen = new Set<string>();
       const dedupedSamples: any[] = [];
