@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Mouse, Keyboard, Activity as ActivityIcon, Zap, Users, Calendar, Diamond, ChevronDown, Monitor } from 'lucide-react';
-import { PageLayout, KpiCard, FilterSelect, Card } from '../components/ui';
+import { PageLayout, KpiCard, FilterSelect, Card, LoadingState } from '../components/ui';
 
 import { AppUsageList } from '../components/activity/AppUsageList';
 import { ScreenshotGallery } from '../components/activity/ScreenshotGallery';
@@ -152,58 +152,66 @@ export function Activity() {
                 </div>
             }
         >
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12 animate-in fade-in duration-500">
-                <KpiCard icon={<Mouse className="w-6 h-6" />} label="Mouse Clicks" value={totalClicks.toLocaleString()} />
-                <KpiCard icon={<Keyboard className="w-6 h-6" />} label="Keyboard Usage" value={totalKeys.toLocaleString()} />
-                <KpiCard icon={<ActivityIcon className="w-6 h-6" />} label="Billable Time" value={`${productiveMinutes} min`} />
-                <KpiCard icon={<Zap className="w-6 h-6" />} label="Avg Activity" value={`${avgActivity}%`} />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
-                <Card className="lg:col-span-2 p-0 border-border bg-surface-solid shadow-sm rounded-2xl overflow-hidden">
-                    <div className="px-8 py-5 border-b border-border bg-surface-subtle flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-surface-solid border border-border flex items-center justify-center text-primary shadow-sm">
-                                <ActivityIcon className="w-5 h-5" />
-                            </div>
-                            <h3 className="text-sm font-bold text-text-primary tracking-tight">Activity Over Time</h3>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Live Updates</span>
-                        </div>
-                    </div>
-                    <div className="p-8">
-                        <TimelineGrid samples={uniqueSamples} targetTz={selectedMember?.timezone} />
-                    </div>
-                </Card>
-                
-                <Card className="lg:col-span-1 p-0 border-border bg-surface-solid shadow-sm rounded-2xl overflow-hidden">
-                    <div className="px-8 py-5 border-b border-border bg-surface-subtle flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-surface-solid border border-border flex items-center justify-center text-primary shadow-sm">
-                            <Diamond className="w-5 h-5" />
-                        </div>
-                        <h3 className="text-sm font-bold text-text-primary tracking-tight">Usage Breakdown</h3>
-                    </div>
-                    <div className="p-0">
-                        <AppUsageList samples={samples} />
-                    </div>
-                </Card>
-            </div>
-
-            <div className="mt-12">
-                 <div className="flex items-center gap-4 mb-8 px-4">
-                    <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg">
-                        <Monitor className="w-6 h-6" />
-                    </div>
-                    <div>
-                        <h2 className="text-2xl font-bold text-text-primary tracking-tight">Screenshot Gallery</h2>
-                        <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">Visual history of work sessions</p>
-                    </div>
+            {loading ? (
+                <div className="py-40 flex items-center justify-center">
+                    <LoadingState message="Retrieving activity details and screenshots..." />
                 </div>
-                
-                <ScreenshotGallery screenshots={screenshots} onSelectImage={setEnlarged} />
-            </div>
+            ) : (
+                <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12 animate-in fade-in duration-500">
+                        <KpiCard icon={<Mouse className="w-6 h-6" />} label="Mouse Clicks" value={totalClicks.toLocaleString()} />
+                        <KpiCard icon={<Keyboard className="w-6 h-6" />} label="Keyboard Usage" value={totalKeys.toLocaleString()} />
+                        <KpiCard icon={<ActivityIcon className="w-6 h-6" />} label="Billable Time" value={`${productiveMinutes} min`} />
+                        <KpiCard icon={<Zap className="w-6 h-6" />} label="Avg Activity" value={`${avgActivity}%`} />
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+                        <Card className="lg:col-span-2 p-0 border-border bg-surface-solid shadow-sm rounded-2xl overflow-hidden">
+                            <div className="px-8 py-5 border-b border-border bg-surface-subtle flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-lg bg-surface-solid border border-border flex items-center justify-center text-primary shadow-sm">
+                                        <ActivityIcon className="w-5 h-5" />
+                                    </div>
+                                    <h3 className="text-sm font-bold text-text-primary tracking-tight">Activity Over Time</h3>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                    <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Live Updates</span>
+                                </div>
+                            </div>
+                            <div className="p-8">
+                                <TimelineGrid samples={uniqueSamples} targetTz={selectedMember?.timezone} />
+                            </div>
+                        </Card>
+                        
+                        <Card className="lg:col-span-1 p-0 border-border bg-surface-solid shadow-sm rounded-2xl overflow-hidden">
+                            <div className="px-8 py-5 border-b border-border bg-surface-subtle flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-surface-solid border border-border flex items-center justify-center text-primary shadow-sm">
+                                    <Diamond className="w-5 h-5" />
+                                </div>
+                                <h3 className="text-sm font-bold text-text-primary tracking-tight">Usage Breakdown</h3>
+                            </div>
+                            <div className="p-0">
+                                <AppUsageList samples={samples} />
+                            </div>
+                        </Card>
+                    </div>
+
+                    <div className="mt-12">
+                         <div className="flex items-center gap-4 mb-8 px-4">
+                            <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg">
+                                <Monitor className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <h2 className="text-2xl font-bold text-text-primary tracking-tight">Screenshot Gallery</h2>
+                                <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">Visual history of work sessions</p>
+                            </div>
+                        </div>
+                        
+                        <ScreenshotGallery screenshots={screenshots} onSelectImage={setEnlarged} />
+                    </div>
+                </>
+            )}
             
             <ScreenshotLightbox enlarged={enlarged} setEnlarged={setEnlarged} />
         </PageLayout>
