@@ -5,7 +5,8 @@ import {
   ChevronRight, LogOut, CheckCircle2,
   ShieldAlert, Eye, MapPin, MonitorPlay, MousePointerClick,
   ClipboardList, Calendar, Circle, ChevronDown, ChevronUp,
-  User as UserIcon, Camera, Save, ArrowLeft
+  User as UserIcon, Camera, Save, ArrowLeft,
+  Clock, Activity, AlertCircle
 } from 'lucide-react';
 import { trackerAPI } from './tauri-ipc';
 import './App.css';
@@ -66,6 +67,8 @@ interface Project {
     todaySeconds: number;
     weeklySeconds: number;
     activityPercent: number;
+    rawTodaySeconds?: number;
+    keptIdleSeconds?: number;
   };
 }
 
@@ -349,44 +352,82 @@ export default function App() {
       });
       const todayStr = fmt.format(now); 
 
+      // 1. Fetch user's sessions for this week
+      const { data: sessionData, error: sessionErr } = await sb
+        .from('sessions')
+        .select('id, project_id, started_at, ended_at')
+        .eq('user_id', userId)
+        .gte('started_at', weekStart.toISOString());
+        
+      if (sessionErr) throw sessionErr;
+      
+      const sessionMap = new Map<string, string>();
+      const sessionIds: string[] = [];
+      for (const s of (sessionData || [])) {
+        sessionMap.set(s.id, s.project_id);
+        sessionIds.push(s.id);
+      }
+
       // Fetch ALL samples for this week (Paginated to bypass 1000 row limit)
       let allSamples: any[] = [];
       const PAGE_SIZE = 1000;
       let hasMore = true;
       let page = 0;
 
-      while (hasMore && page < 50) { // Safety limit 50k
-        const { data: _samples, error: _sampleError } = await sb
-          .from('activity_samples')
-          .select(`
-            recorded_at,
-            idle,
-            activity_percent,
-            session_id,
-            sessions!inner ( project_id, user_id )
-          `)
-          .eq('sessions.user_id', userId)
-          .gte('recorded_at', weekStart.toISOString())
-          .order('recorded_at', { ascending: true })
-          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+      if (sessionIds.length > 0) {
+        // chunk sessionIds if too large, but usually fine for a single week
+        while (hasMore && page < 50) { // Safety limit 50k
+          const { data: _samples, error: _sampleError } = await sb
+            .from('activity_samples')
+            .select(`
+              recorded_at,
+              idle,
+              activity_percent,
+              session_id
+            `)
+            .in('session_id', sessionIds)
+            .gte('recorded_at', weekStart.toISOString())
+            .order('recorded_at', { ascending: true })
+            .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-        if (_sampleError) throw _sampleError;
+          if (_sampleError) throw _sampleError;
 
-        if (_samples && _samples.length > 0) {
-          allSamples.push(..._samples);
+          if (_samples && _samples.length > 0) {
+            allSamples.push(..._samples.map((s: any) => ({
+              ...s,
+              sessions: { project_id: sessionMap.get(s.session_id) }
+            })));
+          }
+
+          if (!_samples || _samples.length < PAGE_SIZE) {
+            hasMore = false;
+          }
+          page++;
         }
-
-        if (!_samples || _samples.length < PAGE_SIZE) {
-          hasMore = false;
-        }
-        page++;
       }
 
       const samples = allSamples;
 
       const statsMap: Record<string, any> = {};
       currentProjects.forEach(p => {
-        statsMap[p.id] = { todaySeconds: 0, weeklySeconds: 0, totalActivity: 0, sampleCount: 0 };
+        statsMap[p.id] = { todaySeconds: 0, weeklySeconds: 0, totalActivity: 0, sampleCount: 0, rawTodaySeconds: 0, keptIdleSeconds: 0 };
+      });
+
+      const nowMs = Date.now();
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+
+      sessionData?.forEach((s: any) => {
+          const pId = s.project_id;
+          if (!statsMap[pId]) return;
+          const startedAt = new Date(s.started_at).getTime();
+          const endedAt = s.ended_at ? new Date(s.ended_at).getTime() : nowMs;
+          
+          if (endedAt > startOfToday.getTime()) {
+              const effectiveStart = Math.max(startedAt, startOfToday.getTime());
+              const durSeconds = Math.floor((endedAt - effectiveStart) / 1000);
+              statsMap[pId].rawTodaySeconds += durSeconds;
+          }
       });
 
       const seen = new Set<string>();
@@ -406,8 +447,8 @@ export default function App() {
 
         // Respect 'keep_idle' setting. If false, skip idle samples.
         // Treat null activity_percent as productive.
-        const isIdle = samp.idle === true && samp.activity_percent === 0;
-        if (user?.keep_idle === false && isIdle) return;
+        const isIdle = samp.activity_percent === 0;
+        if (user?.keep_idle_mode === 'never' && isIdle) return;
 
         const dateStr = fmt.format(new Date(samp.recorded_at));
 
@@ -415,6 +456,9 @@ export default function App() {
         statsMap[pid].weeklySeconds += 60;
         if (dateStr === todayStr) {
           statsMap[pid].todaySeconds += 60;
+          if (isIdle) {
+            statsMap[pid].keptIdleSeconds += 60;
+          }
         }
 
         statsMap[pid].totalActivity += (samp.activity_percent ?? 0);
@@ -426,10 +470,12 @@ export default function App() {
         stats: statsMap[p.id] ? {
           todaySeconds: statsMap[p.id].todaySeconds,
           weeklySeconds: statsMap[p.id].weeklySeconds,
+          rawTodaySeconds: statsMap[p.id].rawTodaySeconds,
+          keptIdleSeconds: statsMap[p.id].keptIdleSeconds,
           activityPercent: statsMap[p.id].sampleCount > 0 
             ? Math.round(statsMap[p.id].totalActivity / statsMap[p.id].sampleCount) 
             : 0
-        } : { todaySeconds: 0, weeklySeconds: 0, activityPercent: 0 }
+        } : { todaySeconds: 0, weeklySeconds: 0, activityPercent: 0, rawTodaySeconds: 0, keptIdleSeconds: 0 }
       }));
       setProjects(updatedProjects);
     } catch (err) {
@@ -585,6 +631,7 @@ export default function App() {
             // Discard logic (DB + local timer) without resuming
             discardIdleTime(limit, false);
             idleMinutesRef.current = 0;
+            (trackerAPI as any).startIdleMonitoring(limit);
             return;
           }
 
@@ -799,7 +846,7 @@ export default function App() {
   }
 
   async function startTracking(project: Project) {
-    setElapsed(project.stats?.todaySeconds || 0);
+    setElapsed(project.stats?.rawTodaySeconds || 0);
     setIsPaused(false);
     setTrackingError(null);
 
@@ -1457,6 +1504,17 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
   const secs = elapsed % 60;
   const fmt  = (n: number) => String(n).padStart(2, '0');
 
+  const baseRaw = project.stats?.rawTodaySeconds || 0;
+  const baseProductive = project.stats?.todaySeconds || 0;
+  const baseKeptIdle = project.stats?.keptIdleSeconds || 0;
+
+  const displayRaw = elapsed;
+  // If timer is running, the added time is assumed productive
+  const newRawAdded = Math.max(0, displayRaw - baseRaw);
+  const displayProductive = baseProductive + newRawAdded;
+  // Discarded is raw minus what we've accounted for
+  const displayDiscarded = Math.max(0, displayRaw - displayProductive - baseKeptIdle);
+
   return (
     <div className="tracker-layout">
       <Topbar user={user} onLogout={onStop} onSettings={onSettings} todoBadge={todos.length} disabled={true} />
@@ -1533,11 +1591,31 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
             {fmt(hrs)}:{fmt(mins)}:{fmt(secs)}
           </div>
 
-          <p className="timer-subtext">
+          <p className="timer-subtext" style={{ marginBottom: '0.75rem' }}>
             {isPaused
               ? 'Activity is not being recorded.'
               : 'Screenshots and metrics are securely recorded.'}
           </p>
+
+          <div style={{ marginTop: '1rem', padding: '0.625rem 0.875rem', background: 'var(--bg-secondary)', borderRadius: '0.75rem', fontSize: '0.8125rem', display: 'grid', gridTemplateColumns: 'min-content 1fr min-content', gap: '0.5rem 0.75rem', textAlign: 'left', minWidth: '240px', margin: '0 auto 1.5rem auto', border: '1px solid var(--border-light)' }}>
+              <div style={{ color: 'var(--primary)', alignSelf: 'center' }}><Clock size={14}/></div>
+              <div style={{ color: 'var(--text-secondary)' }}>Productive Time</div>
+              <div style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
+                  {fmt(Math.floor(displayProductive / 3600))}:{fmt(Math.floor((displayProductive % 3600) / 60))}
+              </div>
+              
+              <div style={{ color: 'var(--amber)', alignSelf: 'center' }}><Activity size={14} /></div>
+              <div style={{ color: 'var(--text-secondary)' }}>Kept Idle</div>
+              <div style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
+                  {fmt(Math.floor(baseKeptIdle / 3600))}:{fmt(Math.floor((baseKeptIdle % 3600) / 60))}
+              </div>
+
+              <div style={{ color: 'var(--red)', alignSelf: 'center' }}><AlertCircle size={14} /></div>
+              <div style={{ color: 'var(--text-secondary)' }}>Discarded (Neglected)</div>
+              <div style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
+                  {fmt(Math.floor(displayDiscarded / 3600))}:{fmt(Math.floor((displayDiscarded % 3600) / 60))}
+              </div>
+          </div>
 
           <div className="tracker-controls">
             {isPaused ? (
