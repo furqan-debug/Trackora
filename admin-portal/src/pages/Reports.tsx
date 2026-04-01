@@ -16,7 +16,8 @@ import {
 import clsx from 'clsx';
 import { 
     formatDuration, 
-    calculateActivityScore
+    calculateActivityScore,
+    getGroupingDateInTz
 } from '../lib/dataUtils';
 
 const COLORS = ['#506ef8', '#818cf8', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
@@ -38,7 +39,7 @@ export function Reports() {
     // Team & Member filtering
     const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
     const [selectedTeamId, setSelectedTeamId] = useState<string>('All');
-    const [members, setMembers] = useState<{ id: string; email: string; full_name: string; pay_rate?: number; bill_rate?: number }[]>([]);
+    const [members, setMembers] = useState<{ id: string; email: string; full_name: string; pay_rate?: number; bill_rate?: number; keep_idle_mode?: string; timezone?: string }[]>([]);
     const [selectedMemberId, setSelectedMemberId] = useState<string>('All');
 
     useEffect(() => {
@@ -56,7 +57,7 @@ export function Reports() {
     }
 
     async function fetchMembers() {
-        const { data } = await supabase.from('members').select('id, email, full_name, pay_rate, bill_rate').eq('status', 'Active');
+        const { data } = await supabase.from('members').select('id, email, full_name, pay_rate, bill_rate, keep_idle_mode, timezone').eq('status', 'Active');
         if (data) setMembers(data);
     }
 
@@ -101,12 +102,10 @@ export function Reports() {
         }
 
         let samplesQuery = supabase.from('activity_samples').select('*').gte('recorded_at', start).lte('recorded_at', end);
-        let sessionsQuery = supabase.from('sessions').select('id, user_id, started_at, ended_at').gte('started_at', start).lte('started_at', end);
+        let sessionsQuery = supabase.from('sessions').select('id, user_id, started_at, ended_at').lt('started_at', end).or(`ended_at.is.null,ended_at.gt.${start}`);
         let ssQuery = supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', start).lte('recorded_at', end);
 
         if (filteredMemberIds.length > 0) {
-            // activity_samples table doesn't have a direct user_id column. 
-            // We filter activity_samples in memory later after fetching sessions.
             sessionsQuery = sessionsQuery.in('user_id', filteredMemberIds);
             ssQuery = ssQuery.in('user_id', filteredMemberIds);
         }
@@ -119,53 +118,71 @@ export function Reports() {
             ]);
 
             const allSamples = samples || [];
-
-            const memberMap = new Map();
-            members.forEach(m => memberMap.set(m.id, m));
-
             const sessionToUserId = new Map();
             (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
             const activeSessionIds = new Set((sessions || []).map(s => s.id));
 
-            // Filter samples for selected members in-memory
-            const filteredSamples = allSamples.filter(s => activeSessionIds.has(s.session_id));
-
-            // Metadata for samples
-            const sessionHasActivity: Record<string, boolean> = {};
-            const lastSampleAtMap: Record<string, string> = {};
-
-            (samples || []).forEach(s => {
-                sessionHasActivity[s.session_id] = true;
-                if (!lastSampleAtMap[s.session_id] || s.recorded_at > lastSampleAtMap[s.session_id]) {
-                    lastSampleAtMap[s.session_id] = s.recorded_at;
-                }
+            // Filtering based on member-specific 'keep_idle' settings
+            const filteredSamples = allSamples.filter(s => {
+                if (!activeSessionIds.has(s.session_id)) return false;
+                const uid = sessionToUserId.get(s.session_id);
+                const mem = members.find(m => m.id === uid);
+                // If member wants to never keep idle, filter out confirmed 0 activity
+                if (mem?.keep_idle_mode === 'never' && s.activity_percent === 0) return false;
+                return true;
             });
 
-            const filteredActiveSamples = filteredSamples.filter(s => !s.idle);
-            const totalMinsVal = filteredActiveSamples.length;
+            const membersMap = new Map<string, any>();
+            const memberTzs = new Map<string, string | undefined>();
+            members.forEach(m => {
+                membersMap.set(m.id, m);
+                memberTzs.set(m.id, m.timezone);
+            });
 
+            // Deduplicate Samples (1 per user per minute)
+            const seen = new Set<string>();
+            const dedupedSamples: any[] = [];
+            
+            // Sort to prefer high activity if duplicates exist
+            const sortedSamples = [...filteredSamples].sort((a, b) => (b.activity_percent ?? 0) - (a.activity_percent ?? 0));
+            
+            sortedSamples.forEach(s => {
+                const uid = sessionToUserId.get(s.session_id);
+                if (!uid) return;
+                
+                // Truncate to the minute: 2026-03-27 18:26:12 -> 2026-03-27 18:26
+                const minute = new Date(s.recorded_at).toISOString().substring(0, 16);
+                const key = `${uid}_${minute}`;
+                
+                if (seen.has(key)) return;
+                seen.add(key);
+                dedupedSamples.push(s);
+            });
+
+            const dailyMap: Record<string, { active: number; total_samples: number; total_minutes: number }> = {};
             let costs = 0;
             let billed = 0;
-            const dailyMap: Record<string, { active: number; total_samples: number; total_minutes: number }> = {};
 
-            filteredActiveSamples.forEach(s => {
-                const day = s.recorded_at.split('T')[0];
-                if (!dailyMap[day]) dailyMap[day] = { active: 0, total_samples: 0, total_minutes: 0 };
-                dailyMap[day].active++;
-                dailyMap[day].total_minutes++;
+            dedupedSamples.forEach(s => {
+                const uid = sessionToUserId.get(s.session_id);
+                if (!uid) return;
                 
-                const m = memberMap.get(sessionToUserId.get(s.session_id));
-                if (m) {
-                    costs += (1 / 60) * (m.pay_rate || 0);
-                    billed += (1 / 60) * (m.bill_rate || 0);
+                const day = getGroupingDateInTz(s.recorded_at, memberTzs.get(uid));
+                
+                if (!dailyMap[day]) dailyMap[day] = { active: 0, total_samples: 0, total_minutes: 0 };
+                
+                // Activity % chart counts minutes with confirmed movement
+                if (s.activity_percent && s.activity_percent > 0) {
+                    dailyMap[day].active++;
                 }
-            });
+                dailyMap[day].total_samples++;
+                dailyMap[day].total_minutes++;
 
-            // Map total samples (idle + active) for activity %
-            filteredSamples.forEach(s => {
-                 const day = s.recorded_at.split('T')[0];
-                 if (!dailyMap[day]) dailyMap[day] = { active: 0, total_samples: 0, total_minutes: 0 };
-                 dailyMap[day].total_samples++;
+                const member = membersMap.get(uid);
+                if (member) {
+                    costs += (1 / 60) * (member.pay_rate || 0);
+                    billed += (1 / 60) * (member.bill_rate || 0);
+                }
             });
 
             setDailyActivity(Object.entries(dailyMap).sort().map(([date, v]) => ({
@@ -185,18 +202,16 @@ export function Reports() {
 
             setTotalSessions((sessions || []).length);
             setScreenshotCount(ssCount || 0);
-            setTotalMins(totalMinsVal);
+            setTotalMins(dedupedSamples.length);
             setTotalCosts(Math.round(costs));
             setTotalBilled(Math.round(billed));
-            setAvgActivity(calculateActivityScore(filteredSamples));
+            setAvgActivity(calculateActivityScore(dedupedSamples));
         } catch (err) {
             console.error("fetchReports unhandled error:", err);
         } finally {
             setLoading(false);
         }
     }
-
-    // fmtHours replaced by formatDuration
 
     return (
         <PageLayout
@@ -230,7 +245,7 @@ export function Reports() {
                             icon={<ActivityIcon className="w-4 h-4" />}
                             value={selectedMemberId}
                             onChange={(val) => { setSelectedMemberId(val); setSelectedTeamId('All'); }}
-                            options={[{ id: 'All', name: 'All Members' }, ...members].map(m => ({ id: m.id, name: (m as any).full_name || (m as any).name || (m as any).email }))}
+                            options={[{ id: 'All', name: 'All Members' }, ...members].map((m: any) => ({ id: m.id, name: m.full_name || m.email || m.name || 'Member' }))}
                         />
                         <Button 
                             variant="secondary" 

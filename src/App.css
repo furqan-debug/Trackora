@@ -245,6 +245,13 @@ html, body, #root { height: 100%; }
   z-index: 50;
 }
 
+.disabled-actions {
+  pointer-events: none !important;
+  opacity: 0.6;
+  filter: grayscale(0.4);
+  cursor: not-allowed !important;
+}
+
 .topbar-brand {
   display: flex;
   align-items: center;

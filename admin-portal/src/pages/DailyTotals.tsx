@@ -25,7 +25,7 @@ export function DailyTotals() {
     const [data, setData] = useState<DayTotal[]>([]);
     const [weekOffset, setWeekOffset] = useState(0);
     const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
-    const [allMembers, setAllMembers] = useState<{ id: string; full_name: string; timezone?: string; keep_idle?: boolean }[]>([]);
+    const [allMembers, setAllMembers] = useState<{ id: string; full_name: string; timezone?: string; keep_idle_mode?: string }[]>([]);
 
     const weekDates = Array.from({ length: 7 }, (_, i) => {
         const d = new Date();
@@ -47,7 +47,7 @@ export function DailyTotals() {
             end.setHours(23, 59, 59, 999);
 
             // Fetch members
-            const { data: members } = await supabase.from('members').select('id, full_name, timezone, keep_idle');
+            const { data: members } = await supabase.from('members').select('id, full_name, timezone, keep_idle_mode');
             if (members && allMembers.length === 0) {
                 setAllMembers(members);
             }
@@ -78,20 +78,33 @@ export function DailyTotals() {
                 const sessionToUserId = new Map();
                 (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
 
-                const memberSettingsMap: Record<string, boolean> = {};
+                const memberSettingsMap: Record<string, string> = {};
                 members.forEach(m => {
-                    memberSettingsMap[m.id] = m.keep_idle ?? true;
+                    memberSettingsMap[m.id] = m.keep_idle_mode || 'prompt';
+                });
+
+                const seen = new Set<string>();
+                const dedupedSamples: any[] = [];
+                const sortedSamples = [...(samples || [])].sort((a, b) => (b.activity_percent ?? 0) - (a.activity_percent ?? 0));
+
+                sortedSamples.forEach(s => {
+                    const uid = sessionToUserId.get(s.session_id);
+                    if (!uid || !memberMap[uid]) return;
+                    
+                    const minute = new Date(s.recorded_at).toISOString().substring(0, 16);
+                    const key = `${uid}_${minute}`;
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    dedupedSamples.push(s);
                 });
 
                 const stats: Record<string, number[]> = {};
                 
-                (samples || []).forEach(s => {
+                dedupedSamples.forEach(s => {
                     const uid = sessionToUserId.get(s.session_id);
-                    if (!uid || !memberMap[uid]) return;
-
-                    const keepIdle = memberSettingsMap[uid];
-                    // If keepIdle is explicitly false, filter out definitive 0 activity
-                    if (keepIdle === false && s.activity_percent === 0) return;
+                    const keepIdleMode = memberSettingsMap[uid];
+                    // If keepIdleMode is explicitly 'never', filter out definitive 0 activity
+                    if (keepIdleMode === 'never' && s.activity_percent === 0) return;
 
                     const dayIdxRaw = getDayIndexInTz(s.recorded_at, memberMap[uid].tz);
                     // Match to UI columns (MON=0, TUE=1 ... SUN=6)

@@ -63,7 +63,7 @@ export function MemberFormPage() {
     const [nickname, setNickname] = useState('');
     const [idleEnabled, setIdleEnabled] = useState(true);
     const [idleLimit, setIdleLimit] = useState('10');
-    const [keepIdle, setKeepIdle] = useState(true);
+    const [keepIdleMode, setKeepIdleMode] = useState<'prompt' | 'always' | 'never'>('prompt');
     const [trackingEnabled, setTrackingEnabled] = useState(true);
     const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
@@ -109,7 +109,7 @@ export function MemberFormPage() {
                 setNickname(data.nickname || '');
                 setIdleEnabled(data.idle_enabled ?? true);
                 setIdleLimit(data.idle_limit?.toString() || '10');
-                setKeepIdle(data.keep_idle ?? true);
+                setKeepIdleMode(data.keep_idle_mode || 'prompt');
                 setTrackingEnabled(data.tracking_enabled ?? true);
                 setAvatarUrl(data.avatar_url || null);
             }
@@ -152,7 +152,7 @@ export function MemberFormPage() {
                 nickname: nickname,
                 idle_enabled: idleEnabled,
                 idle_limit: parseInt(idleLimit) || 10,
-                keep_idle: keepIdle,
+                keep_idle_mode: keepIdleMode,
                 tracking_enabled: trackingEnabled,
             };
 
@@ -433,23 +433,32 @@ export function MemberFormPage() {
                                         </button>
                                     </div>
 
-                                    <div className="flex items-center justify-between p-6 bg-surface-subtle border border-border rounded-2xl">
-                                        <div>
-                                            <label className="text-sm font-bold text-text-primary block">Keep Idle Time</label>
-                                            <p className="text-[11px] text-text-muted font-medium mt-1">Include 0% activity blocks in billable total (Hubstaff Logic)</p>
+                                    <div className="space-y-4 p-6 bg-surface-subtle border border-border rounded-2xl">
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <label className="text-sm font-bold text-text-primary block">Keep Idle Time (Hubstaff Mode)</label>
+                                                <p className="text-[11px] text-text-muted font-medium mt-1">Determine how inactivity is handled in the tracker</p>
+                                            </div>
+                                            <div className="relative group">
+                                                <select
+                                                    value={keepIdleMode}
+                                                    onChange={e => setKeepIdleMode(e.target.value as any)}
+                                                    className="pl-6 pr-10 py-2.5 bg-white border border-border rounded-xl text-[11px] font-bold text-text-primary outline-none focus:border-primary transition-all appearance-none cursor-pointer uppercase tracking-wider shadow-sm"
+                                                >
+                                                    <option value="prompt">PROMPT (USER DECIDES)</option>
+                                                    <option value="always">ALWAYS KEEP</option>
+                                                    <option value="never">NEVER KEEP</option>
+                                                </select>
+                                                <ChevronLeft className="w-3 h-3 text-primary absolute right-4 top-1/2 -translate-y-1/2 -rotate-90 pointer-events-none" />
+                                            </div>
                                         </div>
-                                        <button
-                                            onClick={() => setKeepIdle(!keepIdle)}
-                                            className={clsx(
-                                                "relative w-12 h-6 rounded-full transition-all duration-300",
-                                                keepIdle ? 'bg-emerald-500' : 'bg-border'
-                                            )}
-                                        >
-                                            <div className={clsx(
-                                                "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
-                                                keepIdle ? 'left-7' : 'left-1'
-                                            )} />
-                                        </button>
+                                        <div className="bg-white/40 p-3 rounded-lg border border-border/40">
+                                            <p className="text-[10px] text-text-muted font-medium italic">
+                                                {keepIdleMode === 'prompt' && "The user will be asked if they want to keep or discard the idle time when they return."}
+                                                {keepIdleMode === 'always' && "All idle time is automatically recorded as billable working hours."}
+                                                {keepIdleMode === 'never' && "All inactive time is automatically discarded and not recorded."}
+                                            </p>
+                                        </div>
                                     </div>
 
                                     {idleEnabled && (

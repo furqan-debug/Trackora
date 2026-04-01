@@ -33,11 +33,13 @@ interface User {
   daily_limit?: number;
   idle_limit?: number;
   idle_enabled?: boolean;
+  keep_idle_mode?: 'prompt' | 'always' | 'never';
   tracking_enabled?: boolean;
   avatar_url?: string;
   phone?: string;
   organization_id?: string;
   timezone?: string;
+  keep_idle?: boolean;
 }
 
 async function syncTimezone(sb: any, memberId: string, memberTz: string | null | undefined) {
@@ -340,7 +342,12 @@ export default function App() {
       const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
       weekStart.setHours(0, 0, 0, 0);
 
-      const todayStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD local
+      // Stable Date Grouping (matches Admin Portal)
+      const fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      });
+      const todayStr = fmt.format(now); 
 
       // Fetch ALL samples for this week
       const { data: samples, error: sampleError } = await sb
@@ -362,14 +369,27 @@ export default function App() {
         statsMap[p.id] = { todaySeconds: 0, weeklySeconds: 0, totalActivity: 0, sampleCount: 0 };
       });
 
-      (samples || []).forEach((samp: any) => {
+      const seen = new Set<string>();
+      const dedupedSamples: any[] = [];
+      const sortedSamples = [...(samples || [])].sort((a, b) => (b.activity_percent ?? 0) - (a.activity_percent ?? 0));
+
+      sortedSamples.forEach(s => {
+        const minute = new Date(s.recorded_at).toISOString().substring(0, 16);
+        if (seen.has(minute)) return;
+        seen.add(minute);
+        dedupedSamples.push(s);
+      });
+
+      dedupedSamples.forEach((samp: any) => {
         const pid = samp.sessions?.project_id;
         if (!pid || !statsMap[pid]) return;
 
-        // "Show active time not idle" - skip idle samples
-        if (samp.idle) return;
+        // Respect 'keep_idle' setting. If false, skip idle samples.
+        // Treat null activity_percent as productive.
+        const isIdle = samp.idle === true && samp.activity_percent === 0;
+        if (user?.keep_idle === false && isIdle) return;
 
-        const dateStr = new Date(samp.recorded_at).toLocaleDateString('en-CA'); // YYYY-MM-DD local
+        const dateStr = fmt.format(new Date(samp.recorded_at));
 
         // Every sample represents 1 minute (60s) of active time
         statsMap[pid].weeklySeconds += 60;
@@ -435,10 +455,12 @@ export default function App() {
           daily_limit: member.daily_limit,
           idle_limit: member.idle_limit,
           idle_enabled: member.idle_enabled,
+          keep_idle_mode: member.keep_idle_mode,
           tracking_enabled: member.tracking_enabled,
           avatar_url: member.avatar_url,
           organization_id: member.organization_id,
-          timezone: tz || undefined
+          timezone: tz || undefined,
+          keep_idle: member.keep_idle
         };
         console.log('USER LOADED (Session):', userObj);
         setUser(userObj);
@@ -454,6 +476,68 @@ export default function App() {
     });
   }, []); // Run once on mount
 
+  const discardIdleTime = async (minutes: number) => {
+    if (!user || !sessionId) return;
+    const sb = await getSupabase();
+    
+    // 1. Delete samples from the last X minutes
+    const startTime = new Date(Date.now() - (minutes * 60000)).toISOString();
+    await sb.from('activity_samples')
+      .delete()
+      .eq('session_id', sessionId)
+      .gte('recorded_at', startTime);
+      
+    // 2. Adjust local timer
+    setElapsed(prev => Math.max(0, prev - (minutes * 60)));
+    
+    // 3. Resume
+    setIdlePaused(false);
+    handleResume();
+  };
+
+  const reassignIdleTime = async (minutes: number, newProjectId: string) => {
+    if (!user || !sessionId) return;
+    const sb = await getSupabase();
+    
+    const startTime = new Date(Date.now() - (minutes * 60000)).toISOString();
+    
+    // Find or create a session for the target project
+    const { data: existingSession } = await sb.from('sessions')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('project_id', newProjectId)
+      .is('ended_at', null)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .single();
+      
+    let targetSessionId = existingSession?.id;
+    if (!targetSessionId) {
+      const { data: newSess } = await sb.from('sessions').insert({
+        user_id: user.id,
+        project_id: newProjectId,
+        started_at: startTime
+      }).select().single();
+      targetSessionId = newSess?.id;
+    }
+    
+    if (targetSessionId) {
+      await sb.from('activity_samples')
+        .update({ session_id: targetSessionId })
+        .eq('session_id', sessionId)
+        .gte('recorded_at', startTime);
+    }
+    
+    // 2. Adjust local state
+    setIdlePaused(false);
+    handleResume();
+    fetchDashboardStats(user.id, projects);
+  };
+
+  // Attach to window for the child components to call easily
+  (window as any).discardIdleTime = discardIdleTime;
+  (window as any).reassignIdleTime = reassignIdleTime;
+
   useEffect(() => {
     if (!isTracking || (user && user.idle_enabled === false)) return;
 
@@ -462,9 +546,27 @@ export default function App() {
         idleMinutesRef.current += 1;
         const limit = user?.idle_limit || 10;
         if (idleMinutesRef.current >= limit && !isPaused) {
+          const mode = user?.keep_idle_mode || 'prompt';
+          
+          if (mode === 'always') {
+            // Automatically keep: Just reset counter and notify (optional)
+            idleMinutesRef.current = 0;
+            return;
+          }
+
+          if (mode === 'never') {
+            // Automatically discard
+            setIdlePaused(true);
+            handlePause();
+            // Discard logic (DB + local timer)
+            discardIdleTime(limit);
+            idleMinutesRef.current = 0;
+            return;
+          }
+
+          // Default: 'prompt'
           setIdlePaused(true);
           handlePause();
-          setElapsed(current => Math.max(0, current - (limit * 60)));
           idleMinutesRef.current = 0;
           (trackerAPI as any).startIdleMonitoring(limit);
         }
@@ -630,10 +732,12 @@ export default function App() {
         daily_limit: member.daily_limit,
         idle_limit: member.idle_limit,
         idle_enabled: member.idle_enabled,
+        keep_idle_mode: member.keep_idle_mode,
         tracking_enabled: member.tracking_enabled,
         avatar_url: member.avatar_url,
         organization_id: member.organization_id,
-        timezone: tz || undefined
+        timezone: tz || undefined,
+        keep_idle: member.keep_idle
       };
       const { data: projectsData } = await sb.from('projects').select('*');
       const token = authData.session.access_token;
@@ -708,7 +812,28 @@ export default function App() {
   }
 
   async function handleStop() {
+    const finalElapsed = elapsed;
+    const finalActiveProject = activeProject;
+    
     await trackerAPI.stopTracking();
+    
+    // Immediate Local Update to prevent restart race condition
+    if (finalActiveProject) {
+      setProjects(prev => prev.map(p => {
+        if (p.id === finalActiveProject.id) {
+          return {
+            ...p,
+            stats: {
+              ...p.stats,
+              todaySeconds: finalElapsed,
+              weeklySeconds: (p.stats?.weeklySeconds || 0) + (finalElapsed - (p.stats?.todaySeconds || 0))
+            } as any
+          };
+        }
+        return p;
+      }));
+    }
+
     setIsTracking(false);
     setIsPaused(false);
     setSessionId(null);
@@ -829,7 +954,8 @@ export default function App() {
               onResume={handleResume} 
               onSettings={() => setScreen('settings')} 
               todos={todos} 
-              onTodoDone={handleTodoDone} 
+              onTodoDone={handleTodoDone}
+              projects={projects}
             />
           </motion.div>
         )}
@@ -1002,7 +1128,7 @@ function LoginScreen({ onLogin, rememberMe, setRememberMe }: {
 // ─────────────────────────────────────────────────────────────────────────────
 // Topbar
 // ─────────────────────────────────────────────────────────────────────────────
-function Topbar({ user, onLogout, onSettings, todoBadge }: { user?: User; onLogout?: () => void; onSettings?: () => void; todoBadge?: number }) {
+function Topbar({ user, onLogout, onSettings, todoBadge, disabled }: { user?: User; onLogout?: () => void; onSettings?: () => void; todoBadge?: number; disabled?: boolean }) {
   const initials = user?.full_name?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'U';
   return (
     <header className="app-topbar">
@@ -1014,7 +1140,7 @@ function Topbar({ user, onLogout, onSettings, todoBadge }: { user?: User; onLogo
       </div>
       {user && <LocalClock />}
       {user && onLogout && (
-        <div className="topbar-actions">
+        <div className={`topbar-actions ${disabled ? 'disabled-actions' : ''}`}>
           {todoBadge != null && todoBadge > 0 && (
             <div style={{ position: 'relative', display: 'inline-flex' }} title={`${todoBadge} open task${todoBadge > 1 ? 's' : ''}`}>
               <ClipboardList size={18} style={{ color: 'var(--text-tertiary)' }} />
@@ -1026,14 +1152,14 @@ function Topbar({ user, onLogout, onSettings, todoBadge }: { user?: User; onLogo
               }}>{todoBadge > 9 ? '9+' : todoBadge}</span>
             </div>
           )}
-          <div className="user-avatar" onClick={onSettings} style={{ cursor: onSettings ? 'pointer' : 'default', overflow: 'hidden' }}>
+          <div className="user-avatar" onClick={disabled ? undefined : onSettings} style={{ cursor: (onSettings && !disabled) ? 'pointer' : 'default', overflow: 'hidden' }}>
             <div className="user-avatar-wrap">
               {user.avatar_url ? (
                 <SignedImage path={user.avatar_url} bucket="avatars" className="user-avatar-img" />
               ) : initials}
             </div>
           </div>
-          <button onClick={onLogout} className="btn btn-ghost" title="Sign out" style={{ padding: '0.3rem' }}>
+          <button onClick={disabled ? undefined : onLogout} className="btn btn-ghost" title={disabled ? "Stop timer to sign out" : "Sign out"} style={{ padding: '0.3rem' }} disabled={disabled}>
             <LogOut size={16} />
           </button>
         </div>
@@ -1045,11 +1171,11 @@ function Topbar({ user, onLogout, onSettings, todoBadge }: { user?: User; onLogo
 // ─────────────────────────────────────────────────────────────────────────────
 // My Tasks Panel
 // ─────────────────────────────────────────────────────────────────────────────
-function MyTasksPanel({ todos, onDone }: { todos: Todo[]; onDone: (id: string) => void }) {
+function MyTasksPanel({ todos, onDone, disabled }: { todos: Todo[]; onDone: (id: string) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(true);
   if (todos.length === 0) return null;
   return (
-    <div className="tasks-panel">
+    <div className={`tasks-panel ${disabled ? 'disabled-actions' : ''}`}>
       <button onClick={() => setOpen(o => !o)} className={`tasks-panel-header ${open ? 'open' : ''}`}>
         <span className="tasks-panel-title">
           <ClipboardList size={12} />
@@ -1285,7 +1411,7 @@ function ConsentItem({ icon, title, desc }: { icon: React.ReactNode; title: stri
 // ─────────────────────────────────────────────────────────────────────────────
 // Screen: Tracker
 // ─────────────────────────────────────────────────────────────────────────────
-function TrackerScreen({ user, project, isPaused = false, idlePaused = false, onResumeFromIdle, elapsed, onStop, onPause, onResume, onSettings, todos, onTodoDone }: {
+function TrackerScreen({ user, project, isPaused = false, idlePaused = false, onResumeFromIdle, elapsed, onStop, onPause, onResume, onSettings, todos, onTodoDone, projects }: {
   user: User;
   project: Project;
   sessionId?: string | null;
@@ -1299,7 +1425,9 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
   onSettings: () => void;
   todos: Todo[];
   onTodoDone: (id: string) => void;
+  projects: Project[];
 }) {
+  const [showReassign, setShowReassign] = useState(false);
   const hrs  = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);
   const secs = elapsed % 60;
@@ -1307,27 +1435,64 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
 
   return (
     <div className="tracker-layout">
-      <Topbar user={user} onLogout={onStop} onSettings={onSettings} todoBadge={todos.length} />
+      <Topbar user={user} onLogout={onStop} onSettings={onSettings} todoBadge={todos.length} disabled={true} />
 
       <div className="tracker-body">
         <motion.div className="tracker-widget" initial={{ y: 16, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.35 }}>
           {idlePaused && (
             <div className="idle-overlay" style={{
               position: 'absolute', inset: 0, zIndex: 100,
-              background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(8px)',
+              background: 'rgba(255, 255, 255, 0.98)', backdropFilter: 'blur(12px)',
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              padding: '1.5rem', textAlign: 'center', borderRadius: 'inherit'
+              padding: '1.25rem', textAlign: 'center', borderRadius: 'inherit'
             }}>
-              <div style={{ background: 'var(--primary-light)', padding: '0.75rem', borderRadius: '1rem', color: 'var(--primary)', marginBottom: '1rem' }}>
-                <ShieldAlert size={28} />
-              </div>
-              <h3 className="heading-3" style={{ margin: '0 0 0.5rem 0', color: 'var(--text-primary)' }}>Inactivity Detected</h3>
-              <p className="text-muted" style={{ marginBottom: '1.5rem', fontSize: '0.8125rem', lineHeight: 1.5 }}>
-                Your {user.idle_limit || 10} minutes of inactivity has been added to idle. Tracking is paused.
-              </p>
-              <button className="btn btn-primary" onClick={onResumeFromIdle} style={{ width: '100%', fontWeight: 600 }}>
-                I'm Back — Resume
-              </button>
+              {!showReassign ? (
+                <>
+                  <div style={{ background: 'var(--amber-light)', padding: '0.75rem', borderRadius: '1rem', color: 'var(--amber)', marginBottom: '0.75rem' }}>
+                    <ShieldAlert size={28} />
+                  </div>
+                  <h3 className="heading-3" style={{ margin: '0 0 0.5rem 0', color: 'var(--text-primary)' }}>You've been idle</h3>
+                  <p className="text-muted" style={{ marginBottom: '1.25rem', fontSize: '0.75rem', lineHeight: 1.4 }}>
+                    We detected {user.idle_limit || 10} minutes of inactivity. What should we do with this time?
+                  </p>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.625rem', width: '100%', marginBottom: '0.625rem' }}>
+                    <button className="btn btn-primary" onClick={onResumeFromIdle} style={{ fontSize: '0.6875rem', padding: '0.625rem 0.25rem' }}>
+                      Keep Time
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => (window as any).discardIdleTime?.((user.idle_limit || 10))} style={{ fontSize: '0.6875rem', padding: '0.625rem 0.25rem', color: 'var(--danger)' }}>
+                      Discard
+                    </button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.625rem', width: '100%' }}>
+                    <button className="btn btn-secondary" onClick={() => setShowReassign(true)} style={{ fontSize: '0.6875rem', padding: '0.625rem 0.25rem' }}>
+                      Reassign
+                    </button>
+                    <button className="btn btn-secondary" onClick={onStop} style={{ fontSize: '0.6875rem', padding: '0.625rem 0.25rem' }}>
+                      Stop Timer
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h3 className="heading-3" style={{ margin: '0 0 0.75rem 0' }}>Reassign Time</h3>
+                  <div className="project-list" style={{ width: '100%', maxHeight: '160px', overflowY: 'auto', marginBottom: '1rem' }}>
+                    {projects.map((p: Project) => (
+                      <div key={p.id} className="project-card" 
+                        onClick={() => {
+                          (window as any).reassignIdleTime?.((user.idle_limit || 10), p.id);
+                          setShowReassign(false);
+                        }}
+                        style={{ padding: '0.5rem', marginBottom: '0.375rem', fontSize: '0.75rem' }}>
+                        {p.name}
+                      </div>
+                    ))}
+                  </div>
+                  <button className="btn btn-secondary" onClick={() => setShowReassign(false)} style={{ width: '100%' }}>
+                    Back
+                  </button>
+                </>
+              )}
             </div>
           )}
           <div className={`status-pill ${isPaused ? 'status-paused' : 'status-live'}`}>

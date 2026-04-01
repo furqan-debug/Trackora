@@ -34,7 +34,7 @@ interface MemberInfo {
     id: string;
     full_name: string;
     timezone?: string;
-    keep_idle?: boolean;
+    keep_idle_mode?: string;
 }
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -58,7 +58,7 @@ export function Timesheets() {
     useEffect(() => { fetchTimesheets(); }, [weekOffset, selectedMember]);
 
     async function fetchMembers() {
-        const { data } = await supabase.from('members').select('id, full_name, timezone, keep_idle').order('full_name');
+        const { data } = await supabase.from('members').select('id, full_name, timezone, keep_idle_mode').order('full_name');
         setMembers(data as MemberInfo[] || []);
     }
 
@@ -103,10 +103,10 @@ export function Timesheets() {
             (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
 
             const memberTzMap: Record<string, string | undefined> = {};
-            const memberKeepIdleMap: Record<string, boolean> = {};
+            const memberKeepIdleModeMap: Record<string, string> = {};
             members.forEach(m => { 
                 memberTzMap[m.id] = m.timezone; 
-                memberKeepIdleMap[m.id] = m.keep_idle ?? true;
+                memberKeepIdleModeMap[m.id] = m.keep_idle_mode || 'prompt';
             });
 
             const dailyMap: Record<string, DailyEntry> = {};
@@ -129,14 +129,33 @@ export function Timesheets() {
             });
 
             // Count Active Minutes per Day
-            (activityData || []).forEach(a => {
+            // Deduplicate Samples (1 per user per minute)
+            const seen = new Set<string>();
+            const dedupedSamples: any[] = [];
+            
+            // Sort to prefer high activity if duplicates exist
+            const sortedSamples = [...(activityData || [])].sort((a, b) => (b.activity_percent ?? 0) - (a.activity_percent ?? 0));
+            
+            sortedSamples.forEach(s => {
+                const uid = sessionToUserId.get(s.session_id);
+                if (!uid) return;
+                
+                const minute = new Date(s.recorded_at).toISOString().substring(0, 16);
+                const key = `${uid}_${minute}`;
+                
+                if (seen.has(key)) return;
+                seen.add(key);
+                dedupedSamples.push(s);
+            });
+
+            // Count Active Minutes per Day
+            dedupedSamples.forEach(a => {
                 const uid = sessionToUserId.get(a.session_id);
                 if (!uid) return;
                 
-                const keepIdle = memberKeepIdleMap[uid];
-                // Only filter if keepIdle is FALSE and activity is DEFINITELY 0
-                // If activity_percent is null, it's from an older tracker - keep it.
-                if (keepIdle === false && a.activity_percent === 0) return;
+                const keepIdleMode = memberKeepIdleModeMap[uid];
+                // Only filter if keepIdleMode is explicitly 'never' and activity is DEFINITELY 0
+                if (keepIdleMode === 'never' && a.activity_percent === 0) return;
 
                 const memberTz = memberTzMap[uid];
                 const dateKey = getGroupingDateInTz(a.recorded_at, memberTz || selectedTz);
