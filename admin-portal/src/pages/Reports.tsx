@@ -16,11 +16,8 @@ import {
 import clsx from 'clsx';
 import { 
     formatDuration, 
-    calculateActivityScore,
-    
-    flattenTimeRanges
+    calculateActivityScore
 } from '../lib/dataUtils';
-import type { TimeInterval } from '../lib/dataUtils';
 
 const COLORS = ['#506ef8', '#818cf8', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
 const RANGES = ['Today', 'Last 7 Days', 'Last 30 Days'] as const;
