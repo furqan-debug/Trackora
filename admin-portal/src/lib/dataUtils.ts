@@ -165,3 +165,61 @@ export function calculateActivityScore(samples: { idle?: boolean, activity_perce
     return Math.round((activeCount / samples.length) * 100);
 }
 
+/**
+ * Formats a Date or ISO string to the given timezone string.
+ * Example targetTz: "America/New_York"
+ */
+export function formatDateInTz(date: string | Date | number, targetTz?: string | null): string {
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return 'Invalid Date';
+    try {
+        return d.toLocaleDateString('en-US', { 
+            timeZone: targetTz || undefined,
+            month: 'short', 
+            day: 'numeric' 
+        });
+    } catch (e) {
+        // Fallback for invalid/empty timezone uses admin's local TZ
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+}
+
+/**
+ * Returns a sortable date string (YYYY-MM-DD) for a specific timezone
+ * so we can group events logically by the member's day.
+ */
+export function getGroupingDateInTz(date: string | Date | number, targetTz?: string | null): string {
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '';
+    try {
+        // use en-CA for YYYY-MM-DD format natively
+        const parts = d.toLocaleDateString('en-CA', { timeZone: targetTz || undefined }).split('-');
+        if (parts.length === 3) {
+            // en-CA format is YYYY-MM-DD
+            return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        }
+        return d.toLocaleDateString('en-CA');
+    } catch (e) {
+        return d.toLocaleDateString('en-CA');
+    }
+}
+
+/**
+ * Gets the localized day index (0=Monday...6=Sunday) for a date in a specific timezone
+ */
+export function getDayIndexInTz(date: string | Date | number, targetTz?: string | null): number {
+    const d = new Date(date);
+    let day = d.getDay(); // Local day as fallback
+    try {
+        // Extract day string 'Mon', 'Tue' etc using the timezone
+        const dayStr = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: targetTz || undefined });
+        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const index = days.indexOf(dayStr);
+        if (index !== -1) return index;
+        // Fallback to local
+        return (day + 6) % 7; 
+    } catch (e) {
+        return (day + 6) % 7;
+    }
+}
+

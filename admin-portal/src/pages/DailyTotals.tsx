@@ -11,7 +11,7 @@ import {
 } from '../components/ui';
 import clsx from 'clsx';
 import { 
-    calculateActivityScore
+    getDayIndexInTz
 } from '../lib/dataUtils';
 
 interface DayTotal {
@@ -25,7 +25,7 @@ export function DailyTotals() {
     const [data, setData] = useState<DayTotal[]>([]);
     const [weekOffset, setWeekOffset] = useState(0);
     const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
-    const [allMembers, setAllMembers] = useState<{ id: string; full_name: string }[]>([]);
+    const [allMembers, setAllMembers] = useState<{ id: string; full_name: string; timezone?: string }[]>([]);
 
     const weekDates = Array.from({ length: 7 }, (_, i) => {
         const d = new Date();
@@ -47,7 +47,7 @@ export function DailyTotals() {
             end.setHours(23, 59, 59, 999);
 
             // Fetch members
-            const { data: members } = await supabase.from('members').select('id, full_name');
+            const { data: members } = await supabase.from('members').select('id, full_name, timezone');
             if (members && allMembers.length === 0) {
                 setAllMembers(members);
             }
@@ -71,9 +71,9 @@ export function DailyTotals() {
                 .lte('recorded_at', end.toISOString());
 
             if (members && sessions) {
-                const memberMap: Record<string, string> = {};
+                const memberMap: Record<string, {name: string, tz: string | null}> = {};
                 members.forEach(m => {
-                    memberMap[m.id] = m.full_name;
+                    memberMap[m.id] = { name: m.full_name, tz: m.timezone };
                 });
 
                 const sessionToUserId = new Map();
@@ -85,15 +85,14 @@ export function DailyTotals() {
                     const uid = sessionToUserId.get(s.session_id);
                     if (!uid || !memberMap[uid] || s.idle) return;
 
-                    const date = new Date(s.recorded_at);
-                    const dayIdx = (date.getDay() + 6) % 7; // Mon=0 ... Sun=6
+                    const dayIdx = getDayIndexInTz(s.recorded_at, memberMap[uid].tz);
 
                     if (!stats[uid]) stats[uid] = Array(7).fill(0);
                     stats[uid][dayIdx] += (1 / 60); // Add 1 minute as hours
                 });
 
                 const result: DayTotal[] = Object.entries(stats).map(([uid, totals]) => ({
-                    member: memberMap[uid],
+                    member: memberMap[uid].name,
                     totals: totals.map(t => Math.round(t * 10) / 10),
                     weeklyTotal: Math.round(totals.reduce((a, b) => a + b, 0) * 10) / 10
                 })).sort((a, b) => b.weeklyTotal - a.weeklyTotal);

@@ -11,7 +11,8 @@ import { PageHeader, Card, KpiCard, LoadingState } from '../components/ui';
 import clsx from 'clsx';
 import { 
     formatDuration, 
-    calculateActivityScore
+    calculateActivityScore,
+    getGroupingDateInTz
 } from '../lib/dataUtils';
 
 interface Session {
@@ -32,6 +33,7 @@ interface DailyEntry {
 interface MemberInfo {
     id: string;
     full_name: string;
+    timezone?: string;
 }
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -55,8 +57,8 @@ export function Timesheets() {
     useEffect(() => { fetchTimesheets(); }, [weekOffset, selectedMember]);
 
     async function fetchMembers() {
-        const { data } = await supabase.from('members').select('id, full_name').order('full_name');
-        setMembers(data || []);
+        const { data } = await supabase.from('members').select('id, full_name, timezone').order('full_name');
+        setMembers(data as MemberInfo[] || []);
     }
 
     async function fetchTimesheets() {
@@ -96,26 +98,37 @@ export function Timesheets() {
                 }
             });
 
+            const sessionToUserId = new Map();
+            (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
+
+            const memberTzMap: Record<string, string | undefined> = {};
+            members.forEach(m => { memberTzMap[m.id] = m.timezone; });
+
             const dailyMap: Record<string, DailyEntry> = {};
+            const selectedTz = selectedMember !== 'all' ? members.find(m => m.id === selectedMember)?.timezone : undefined;
+
             for (let i = 0; i < 7; i++) {
                 const d = new Date(weekStart);
                 d.setDate(weekStart.getDate() + i);
-                const key = d.toISOString().split('T')[0]!;
+                const key = getGroupingDateInTz(d, selectedTz);
                 dailyMap[key] = { date: key, sessions: [], totalMinutes: 0, activeMinutes: 0, activityPercent: 0 };
             }
 
-            // Group sessions by day for activity scores
+            // Group sessions by day
             (sessions || []).forEach(s => {
-                const dayKey = s.started_at.split('T')[0]!;
+                const memberTz = memberTzMap[s.user_id];
+                const dayKey = getGroupingDateInTz(s.started_at, memberTz || selectedTz);
                 if (dailyMap[dayKey]) {
                     dailyMap[dayKey].sessions.push(s as Session);
                 }
             });
 
-            // Count Active Minutes per Day (excluding idle)
+            // Count Active Minutes per Day
             (activityData || []).forEach(a => {
                 if (a.idle) return;
-                const dateKey = a.recorded_at.substring(0, 10);
+                const uid = sessionToUserId.get(a.session_id);
+                const memberTz = uid ? memberTzMap[uid] : undefined;
+                const dateKey = getGroupingDateInTz(a.recorded_at, memberTz || selectedTz);
                 if (dailyMap[dateKey]) {
                     dailyMap[dateKey].totalMinutes += 1;
                     dailyMap[dateKey].activeMinutes += 1;

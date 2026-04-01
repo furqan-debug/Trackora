@@ -17,7 +17,7 @@ import clsx from 'clsx';
 import { 
     formatDuration, 
     calculateActivityScore,
-    getEffectiveEnd,
+    
     flattenTimeRanges
 } from '../lib/dataUtils';
 import type { TimeInterval } from '../lib/dataUtils';

@@ -37,6 +37,22 @@ interface User {
   avatar_url?: string;
   phone?: string;
   organization_id?: string;
+  timezone?: string;
+}
+
+async function syncTimezone(sb: any, memberId: string, memberTz: string | null | undefined) {
+  try {
+    const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (memberTz !== localTz && localTz) {
+      await sb.from('members').update({ timezone: localTz }).eq('id', memberId);
+      console.log(`Synced timezone from ${memberTz} to ${localTz}`);
+      return localTz;
+    }
+    return memberTz || localTz;
+  } catch (e) {
+    console.error('Failed to sync timezone', e);
+    return memberTz;
+  }
 }
 
 interface Project {
@@ -409,6 +425,7 @@ export default function App() {
       }
       
       if (member) {
+        const tz = await syncTimezone(sb, member.id, member.timezone);
         const userObj: User = { 
           id: member.id, 
           email: member.email, 
@@ -420,7 +437,8 @@ export default function App() {
           idle_enabled: member.idle_enabled,
           tracking_enabled: member.tracking_enabled,
           avatar_url: member.avatar_url,
-          organization_id: member.organization_id
+          organization_id: member.organization_id,
+          timezone: tz || undefined
         };
         console.log('USER LOADED (Session):', userObj);
         setUser(userObj);
@@ -602,6 +620,7 @@ export default function App() {
 
       if (memberError || !member) return 'User profile not found in your organization.';
 
+      const tz = await syncTimezone(sb, member.id, member.timezone);
       const userObj: User = { 
         id: member.id, 
         email: member.email, 
@@ -613,7 +632,8 @@ export default function App() {
         idle_enabled: member.idle_enabled,
         tracking_enabled: member.tracking_enabled,
         avatar_url: member.avatar_url,
-        organization_id: member.organization_id
+        organization_id: member.organization_id,
+        timezone: tz || undefined
       };
       const { data: projectsData } = await sb.from('projects').select('*');
       const token = authData.session.access_token;
