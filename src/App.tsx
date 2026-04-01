@@ -496,7 +496,7 @@ export default function App() {
     });
   }, []); // Run once on mount
 
-  const discardIdleTime = async (minutes: number) => {
+  const discardIdleTime = async (minutes: number, shouldResume: boolean = true) => {
     if (!user || !sessionId) return;
     const sb = await getSupabase();
     
@@ -510,9 +510,14 @@ export default function App() {
     // 2. Adjust local timer
     setElapsed(prev => Math.max(0, prev - (minutes * 60)));
     
-    // 3. Resume
-    setIdlePaused(false);
-    handleResume();
+    if (shouldResume) {
+      // 3. Hide prompt and Resume automatically
+      setIdlePaused(false);
+      handleResume();
+    } else {
+      // 3. Keep stopped, hide prompt
+      setIdlePaused(false);
+    }
   };
 
   const reassignIdleTime = async (minutes: number, newProjectId: string) => {
@@ -575,11 +580,10 @@ export default function App() {
           }
 
           if (mode === 'never') {
-            // Automatically discard
-            setIdlePaused(true);
+            // Automatically discard without prompting and leave timer stopped
             handlePause();
-            // Discard logic (DB + local timer)
-            discardIdleTime(limit);
+            // Discard logic (DB + local timer) without resuming
+            discardIdleTime(limit, false);
             idleMinutesRef.current = 0;
             return;
           }
@@ -602,7 +606,7 @@ export default function App() {
         unlistenPromise.then((f: any) => { if (typeof f === 'function') f(); });
       }
     };
-  }, [isTracking, isPaused, user?.idle_limit]); // Re-subscribe when tracking state or limits change
+  }, [isTracking, isPaused, user?.idle_limit, user?.keep_idle_mode]); // Re-subscribe when tracking state or limits/modes change
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
