@@ -40,7 +40,7 @@ export function Reports() {
     // Team & Member filtering
     const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
     const [selectedTeamId, setSelectedTeamId] = useState<string>('All');
-    const [members, setMembers] = useState<{ id: string; email: string; full_name: string; pay_rate?: number; bill_rate?: number; keep_idle_mode?: string; timezone?: string }[]>([]);
+    const [members, setMembers] = useState<{ id: string; email: string; full_name: string; pay_rate?: number; bill_rate?: number; timezone?: string }[]>([]);
     const [selectedMemberId, setSelectedMemberId] = useState<string>('All');
 
     useEffect(() => {
@@ -58,7 +58,7 @@ export function Reports() {
     }
 
     async function fetchMembers() {
-        const { data } = await supabase.from('members').select('id, email, full_name, pay_rate, bill_rate, keep_idle_mode, timezone').eq('status', 'Active');
+        const { data } = await supabase.from('members').select('id, email, full_name, pay_rate, bill_rate, timezone').eq('status', 'Active');
         if (data) setMembers(data);
     }
 
@@ -122,14 +122,11 @@ export function Reports() {
             (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
             const activeSessionIds = new Set((sessions || []).map(s => s.id));
 
-            // Filtering based on member-specific 'keep_idle' settings
+            // NEW FORMULA: only include productive samples (idle=false or null)
             const filteredSamples = allSamples.filter(s => {
                 if (!activeSessionIds.has(s.session_id)) return false;
-                const uid = sessionToUserId.get(s.session_id);
-                const mem = members.find(m => m.id === uid);
-                // If member wants to never keep idle, filter out confirmed 0 activity
-                if (mem?.keep_idle_mode === 'never' && s.activity_percent === 0) return false;
-                return true;
+                // Idle samples are tracked but excluded from productive/billable time
+                return s.idle !== true;
             });
 
             const membersMap = new Map<string, any>();
@@ -180,6 +177,7 @@ export function Reports() {
 
                 const member = membersMap.get(uid);
                 if (member) {
+                    // Only bill/cost productive (non-idle) minutes
                     costs += (1 / 60) * (member.pay_rate || 0);
                     billed += (1 / 60) * (member.bill_rate || 0);
                 }

@@ -106,15 +106,14 @@ export function Activity() {
 
     const uniqueSamples = Array.from(uniqueMinMap.values());
     
-    // Hubstaff productive time calculation
     const selectedMember = members.find(m => m.id === selectedMemberId);
-    const keepIdle = selectedMember?.keep_idle ?? true;
-    
+
     const totalClicks = uniqueSamples.reduce((a, b) => a + b.mouse_clicks, 0);
     const totalKeys = uniqueSamples.reduce((a, b) => a + b.key_presses, 0);
     const avgActivity = calculateActivityScore(uniqueSamples);
     
-    const productiveMinutes = calculateProductiveMinutes(uniqueSamples, keepIdle);
+    // NEW FORMULA: Productive = Total Tracked - Idle (idle=true samples excluded)
+    const productiveMinutes = calculateProductiveMinutes(uniqueSamples);
     
     const isToday = selectedDate === new Date().toISOString().split('T')[0];
     const dateLabel = isToday ? 'Live Timeline' : new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });

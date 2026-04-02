@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Lock, Mail, ArrowRight, Play, Square, Pause,
   ChevronRight, LogOut, CheckCircle2,
-  ShieldAlert, Eye, MapPin, MonitorPlay, MousePointerClick,
+  ShieldAlert, Eye, EyeOff, MapPin, MonitorPlay, MousePointerClick,
   ClipboardList, Calendar, Circle, ChevronDown, ChevronUp,
   User as UserIcon, Camera, Save, ArrowLeft,
-  Clock, Activity, AlertCircle
+  Clock, Activity
 } from 'lucide-react';
 import { trackerAPI } from './tauri-ipc';
 import './App.css';
@@ -66,6 +66,7 @@ interface Project {
   stats?: {
     todaySeconds: number;
     weeklySeconds: number;
+    weeklyIdleSeconds?: number;
     activityPercent: number;
     rawTodaySeconds?: number;
     keptIdleSeconds?: number;
@@ -318,6 +319,7 @@ export default function App() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const idleMinutesRef = useRef(0);
   const [idlePaused, setIdlePaused] = useState(false);
+  const [liveIdleSeconds, setLiveIdleSeconds] = useState(0); // live idle tracking for current session
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const realtimeRef = useRef<any>(null);
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
@@ -410,7 +412,7 @@ export default function App() {
 
       const statsMap: Record<string, any> = {};
       currentProjects.forEach(p => {
-        statsMap[p.id] = { todaySeconds: 0, weeklySeconds: 0, totalActivity: 0, sampleCount: 0, rawTodaySeconds: 0, keptIdleSeconds: 0 };
+        statsMap[p.id] = { todaySeconds: 0, weeklySeconds: 0, weeklyIdleSeconds: 0, totalActivity: 0, sampleCount: 0, rawTodaySeconds: 0, keptIdleSeconds: 0 };
       });
 
       const nowMs = Date.now();
@@ -457,15 +459,17 @@ export default function App() {
         const pid = samp.sessions?.project_id;
         if (!pid || !statsMap[pid]) return;
 
-        // Respect 'keep_idle' setting. If false, skip idle samples.
-        // Treat null activity_percent as productive.
-        const isIdle = samp.activity_percent === 0;
-        if (user?.keep_idle_mode === 'never' && isIdle) return;
+        // NEW FORMULA: Always count every sample toward tracked time.
+        // Idle time (idle=true) is tracked separately but still counts toward total.
+        const isIdle = samp.idle === true;
 
         const dateStr = fmt.format(new Date(samp.recorded_at));
 
-        // Every sample represents 1 minute (60s) of active time
+        // Every sample represents 1 minute (60s) of tracked time
         statsMap[pid].weeklySeconds += 60;
+        if (isIdle) {
+          statsMap[pid].weeklyIdleSeconds += 60;
+        }
         if (dateStr === todayStr) {
           statsMap[pid].todaySeconds += 60;
           if (isIdle) {
@@ -482,12 +486,13 @@ export default function App() {
         stats: statsMap[p.id] ? {
           todaySeconds: statsMap[p.id].todaySeconds,
           weeklySeconds: statsMap[p.id].weeklySeconds,
+          weeklyIdleSeconds: statsMap[p.id].weeklyIdleSeconds,
           rawTodaySeconds: statsMap[p.id].rawTodaySeconds,
           keptIdleSeconds: statsMap[p.id].keptIdleSeconds,
           activityPercent: statsMap[p.id].sampleCount > 0 
             ? Math.round(statsMap[p.id].totalActivity / statsMap[p.id].sampleCount) 
             : 0
-        } : { todaySeconds: 0, weeklySeconds: 0, activityPercent: 0, rawTodaySeconds: 0, keptIdleSeconds: 0 }
+        } : { todaySeconds: 0, weeklySeconds: 0, weeklyIdleSeconds: 0, activityPercent: 0, rawTodaySeconds: 0, keptIdleSeconds: 0 }
       }));
       setProjects(updatedProjects);
     } catch (err) {
@@ -565,17 +570,28 @@ export default function App() {
       .eq('session_id', sessionId)
       .gte('recorded_at', startTime);
       
-    // 2. Adjust local timer
-    setElapsed(prev => Math.max(0, prev - (minutes * 60)));
+    // 2. Adjust local timer and live idle counter
+    const discardedSecs = minutes * 60;
+    setElapsed(prev => Math.max(0, prev - discardedSecs));
+    setLiveIdleSeconds(prev => Math.max(0, prev - discardedSecs));
     
     if (shouldResume) {
-      // 3. Hide prompt and Resume automatically
       setIdlePaused(false);
       handleResume();
     } else {
-      // 3. Keep stopped, hide prompt
       setIdlePaused(false);
     }
+  };
+
+  // Mark the last N minutes of samples as idle=true in DB (when idle threshold is reached)
+  const markSamplesAsIdle = async (minutes: number) => {
+    if (!sessionId) return;
+    const sb = await getSupabase();
+    const startTime = new Date(Date.now() - (minutes * 60000)).toISOString();
+    await sb.from('activity_samples')
+      .update({ idle: true, activity_percent: 0 })
+      .eq('session_id', sessionId)
+      .gte('recorded_at', startTime);
   };
 
   const reassignIdleTime = async (minutes: number, newProjectId: string) => {
@@ -625,22 +641,26 @@ export default function App() {
     if (!isTracking || (user && user.idle_enabled === false)) return;
 
     const unlistenPromise = trackerAPI.onTrackingSample((sample: any) => {
-      if (sample.idle) {
+      // Count as idle if Rust idle flag is true OR if activity_percent is 0
+      // (tiny cursor nudges can keep idle=false but still show 0% activity)
+      const isIdleSample = sample.idle === true || (sample.activity_percent ?? 100) === 0;
+      if (isIdleSample) {
         idleMinutesRef.current += 1;
+        setLiveIdleSeconds(prev => prev + 60); // track live idle for display
         const limit = user?.idle_limit || 10;
         if (idleMinutesRef.current >= limit && !isPaused) {
           const mode = user?.keep_idle_mode || 'prompt';
           
+          // Retroactively mark those samples idle=true in DB so dashboard is accurate
+          markSamplesAsIdle(limit);
+
           if (mode === 'always') {
-            // Automatically keep: Just reset counter and notify (optional)
             idleMinutesRef.current = 0;
             return;
           }
 
           if (mode === 'never') {
-            // Automatically discard without prompting and leave timer stopped
             handlePause();
-            // Discard logic (DB + local timer) without resuming
             discardIdleTime(limit, false);
             idleMinutesRef.current = 0;
             (trackerAPI as any).startIdleMonitoring(limit);
@@ -669,7 +689,8 @@ export default function App() {
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    if (user && (screen === 'projects' || screen === 'tracker')) {
+    // Only auto-refresh on projects screen — never interrupt an active tracker session
+    if (user && screen === 'projects') {
       interval = setInterval(() => {
         fetchDashboardStats(user.id, projects);
       }, 60000); // refresh every minute
@@ -760,14 +781,13 @@ export default function App() {
 
   useEffect(() => {
     if (isTracking && !isPaused && user) {
-      // Calculate how many seconds we've added since the session started
-      const sessionSeconds = activeProject ? Math.max(0, elapsed - (activeProject.stats?.todaySeconds || 0)) : 0;
-      
-      const initialToday = projects.reduce((s, p) => s + (p.stats?.todaySeconds || 0), 0);
-      const initialWeek = projects.reduce((s, p) => s + (p.stats?.weeklySeconds || 0), 0);
-      
-      const currentToday = initialToday + sessionSeconds;
-      const currentWeek = initialWeek + sessionSeconds;
+      // Use productive time (elapsed already represents productive seconds)
+      const currentToday = elapsed;
+      const initialWeek = projects.reduce((s, p) => {
+        const pWeekly = Math.max(0, (p.stats?.weeklySeconds || 0) - (p.stats?.weeklyIdleSeconds || 0));
+        return s + pWeekly;
+      }, 0);
+      const currentWeek = initialWeek + elapsed;
       
       const weeklyLimitSecs = (user.weekly_limit || 40) * 3600;
       const dailyLimitSecs = (user.daily_limit || 8) * 3600;
@@ -858,7 +878,12 @@ export default function App() {
   }
 
   async function startTracking(project: Project) {
-    setElapsed(project.stats?.rawTodaySeconds || 0);
+    // Initialize timer to productive seconds already tracked today
+    const todaySecs = project.stats?.todaySeconds || 0;
+    const idleSecs = project.stats?.keptIdleSeconds || 0;
+    const productiveStart = Math.max(0, todaySecs - idleSecs);
+    setElapsed(productiveStart);
+    setLiveIdleSeconds(0); // reset live idle counter for new session
     setIsPaused(false);
     setTrackingError(null);
 
@@ -895,34 +920,15 @@ export default function App() {
   }
 
   async function handleStop() {
-    const finalElapsed = elapsed;
-    const finalActiveProject = activeProject;
-    
     await trackerAPI.stopTracking();
     
-    // Immediate Local Update to prevent restart race condition
-    if (finalActiveProject) {
-      setProjects(prev => prev.map(p => {
-        if (p.id === finalActiveProject.id) {
-          return {
-            ...p,
-            stats: {
-              ...p.stats,
-              todaySeconds: finalElapsed,
-              weeklySeconds: (p.stats?.weeklySeconds || 0) + (finalElapsed - (p.stats?.todaySeconds || 0))
-            } as any
-          };
-        }
-        return p;
-      }));
-    }
-
     setIsTracking(false);
     setIsPaused(false);
     setSessionId(null);
     setActiveProject(null);
     setElapsed(0);
     setScreen('projects');
+    // Refresh from DB immediately after stop — this gives accurate numbers
     if (user) fetchDashboardStats(user.id, projects);
   }
 
@@ -1032,6 +1038,7 @@ export default function App() {
               idlePaused={idlePaused}
               onResumeFromIdle={() => { setIdlePaused(false); (trackerAPI as any).stopIdleMonitoring(); handleResume(); }}
               elapsed={elapsed} 
+              liveIdleSeconds={liveIdleSeconds}
               onStop={handleStop} 
               onPause={handlePause} 
               onResume={handleResume} 
@@ -1062,6 +1069,7 @@ function LoginScreen({ onLogin, rememberMe, setRememberMe }: {
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forgotMode, setForgotMode] = useState(false);
@@ -1178,9 +1186,30 @@ function LoginScreen({ onLogin, rememberMe, setRememberMe }: {
                   </button>
                 </div>
                 <div style={{ position: 'relative' }}>
-                  <Lock size={15} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
-                  <input type="password" required value={password} onChange={e => setPassword(e.target.value)}
-                    placeholder="••••••••" className="field-input" style={{ paddingLeft: '2.25rem' }} />
+                  <Lock size={15} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="field-input"
+                    style={{ paddingLeft: '2.25rem', paddingRight: '2.25rem' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    tabIndex={-1}
+                    style={{
+                      position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center',
+                      padding: '2px'
+                    }}
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
                 </div>
               </div>
 
@@ -1314,8 +1343,9 @@ function ProjectsScreen({ user, projects, onSelect, onLogout, onSettings, tracki
   todos: Todo[];
   onTodoDone: (id: string) => void;
 }) {
-  const totalToday   = projects.reduce((s, p) => s + (p.stats?.todaySeconds || 0), 0);
-  const totalWeek    = projects.reduce((s, p) => s + (p.stats?.weeklySeconds || 0), 0);
+  // Productive = total tracked - idle
+  const totalToday   = projects.reduce((s, p) => s + Math.max(0, (p.stats?.todaySeconds || 0) - (p.stats?.keptIdleSeconds || 0)), 0);
+  const totalWeek    = projects.reduce((s, p) => s + Math.max(0, (p.stats?.weeklySeconds || 0) - (p.stats?.weeklyIdleSeconds || 0)), 0);
   const tracked      = projects.filter(p => (p.stats?.weeklySeconds || 0) > 0);
   const avgActivity  = tracked.length > 0
     ? Math.round(tracked.reduce((s, p) => s + (p.stats?.activityPercent || 0), 0) / tracked.length)
@@ -1494,7 +1524,7 @@ function ConsentItem({ icon, title, desc }: { icon: React.ReactNode; title: stri
 // ─────────────────────────────────────────────────────────────────────────────
 // Screen: Tracker
 // ─────────────────────────────────────────────────────────────────────────────
-function TrackerScreen({ user, project, isPaused = false, idlePaused = false, onResumeFromIdle, elapsed, onStop, onPause, onResume, onSettings, todos, onTodoDone, projects }: {
+function TrackerScreen({ user, project, isPaused = false, idlePaused = false, onResumeFromIdle, elapsed, liveIdleSeconds = 0, onStop, onPause, onResume, onSettings, todos, onTodoDone, projects }: {
   user: User;
   project: Project;
   sessionId?: string | null;
@@ -1502,6 +1532,7 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
   idlePaused?: boolean;
   onResumeFromIdle?: () => void;
   elapsed: number;
+  liveIdleSeconds?: number;
   onStop: () => void;
   onPause: () => void;
   onResume: () => void;
@@ -1516,16 +1547,14 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
   const secs = elapsed % 60;
   const fmt  = (n: number) => String(n).padStart(2, '0');
 
-  const baseRaw = project.stats?.rawTodaySeconds || 0;
-  const baseProductive = project.stats?.todaySeconds || 0;
   const baseKeptIdle = project.stats?.keptIdleSeconds || 0;
 
-  const displayRaw = elapsed;
-  // If timer is running, the added time is assumed productive
-  const newRawAdded = Math.max(0, displayRaw - baseRaw);
-  const displayProductive = baseProductive + newRawAdded;
-  // Discarded is raw minus what we've accounted for
-  const displayDiscarded = Math.max(0, displayRaw - displayProductive - baseKeptIdle);
+  // NEW FORMULA: Productive = Total Elapsed - Idle
+  // liveIdleSeconds accumulates idle in the current unsaved session
+  // baseKeptIdle is idle from previously completed/synced samples
+  const totalIdleSeconds = baseKeptIdle + liveIdleSeconds;
+  const displayProductive = Math.max(0, elapsed - liveIdleSeconds);
+  const displayIdle = totalIdleSeconds;
 
   return (
     <div className="tracker-layout">
@@ -1617,15 +1646,9 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
               </div>
               
               <div style={{ color: 'var(--amber)', alignSelf: 'center' }}><Activity size={14} /></div>
-              <div style={{ color: 'var(--text-secondary)' }}>Kept Idle</div>
+              <div style={{ color: 'var(--text-secondary)' }}>Idle Time</div>
               <div style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
-                  {fmt(Math.floor(baseKeptIdle / 3600))}:{fmt(Math.floor((baseKeptIdle % 3600) / 60))}
-              </div>
-
-              <div style={{ color: 'var(--red)', alignSelf: 'center' }}><AlertCircle size={14} /></div>
-              <div style={{ color: 'var(--text-secondary)' }}>Discarded (Neglected)</div>
-              <div style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
-                  {fmt(Math.floor(displayDiscarded / 3600))}:{fmt(Math.floor((displayDiscarded % 3600) / 60))}
+                  {fmt(Math.floor(displayIdle / 3600))}:{fmt(Math.floor((displayIdle % 3600) / 60))}
               </div>
           </div>
 

@@ -1,11 +1,11 @@
 {
-  "version": "1.0.8",
-  "notes": "Trackora v1.0.8 - Ghost Session Fix & Release Update",
-  "pub_date": "2026-04-02T01:30:00Z",
+  "version": "1.0.9",
+  "notes": "Trackora v1.0.9 — Idle Tracking Logic Fix & Auto-Updater Patch",
+  "pub_date": "2026-04-03T00:30:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUcGZIa3dzSit3anppWkErd2Y1bUc3RjFxb2syOXhKRG1IODVsWWdLcjFuaDFBekVkcXFOUVg4YWo2SEQwbEJ0T29MRzBFWlpYNmZVNEJ5Q2MwUFlBOEk2VVFCUm8vM3dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1MDc1NzQ3CWZpbGU6VHJhY2tvcmFfMS4wLjhfeDY0LXNldHVwLmV4ZQp5QWtkZTFpd2YxK0JCZ1lWcG1SdHdsNldwVGpuMlhWamVqUjgrZ2QxZ0ZHTkhCUEhacmlDK2tkb2NZUnhzSTRMakJleHVzQlRFMUh1Q2dOdncxUVJEQT09Cg==",
-      "url": "https://github.com/furqan-debug/Trackora/releases/download/v1.0.8/Trackora_1.0.8_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUcGZIa3dzSit3ajI4SFEzaC9abllvQkJlL3dyT0RmenFRRXRQV3c3SU8xa3hmUmU0UVFYME1iMTE1QjRvdCtLelE1OEM4cmRzeFVWb2l2L2gyN1YxRHh2N0h0N1hTaWdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc1MTU3ODA1CWZpbGU6VHJhY2tvcmFfMS4wLjlfeDY0LXNldHVwLmV4ZQpDa216RS8weFJsdWx1bzdvMlloOGY4V1JkOWpDMjZjWVYwUk5Oc2FyV28rcSs4U2hoSEYraG1wYVkyMkk1WDRaOThHT3hZU1hBa2dMODFYeURvNHVDUT09Cg==",
+      "url": "https://github.com/furqan-debug/Trackora/releases/download/v1.0.9/Trackora_1.0.9_x64-setup.exe"
     }
   }
 }

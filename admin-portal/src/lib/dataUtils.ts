@@ -305,17 +305,22 @@ export function getHubstaffBlocks(samples: any[], targetTz?: string | null): Hub
 }
 
 /**
- * Calculates total productive minutes based on Hubstaff logic.
- * If keepIdle is false, blocks/minutes with 0% activity are discarded.
+ * Calculates total productive minutes from samples.
+ * Formula: Productive = Total Tracked - Idle
+ * Each sample represents 1 minute. Samples where idle=true are counted as idle time, not productive.
+ * The keepIdle parameter is kept for backwards-compat but no longer used for pay/time calculation.
  */
-export function calculateProductiveMinutes(samples: any[], keepIdle: boolean = true): number {
-    if (keepIdle) {
-        return samples.length; // Each sample is 1 minute
-    }
-    
-    // Discard samples where activity is confirmed 0
-    // If activity_percent is null (version mismatch/old tracker), treat as productive
-    return samples.filter(s => s.activity_percent === null || s.activity_percent > 0).length;
+export function calculateProductiveMinutes(samples: any[]): number {
+    // Productive = Total samples - idle samples
+    const idleCount = samples.filter(s => s.idle === true).length;
+    return Math.max(0, samples.length - idleCount);
+}
+
+/**
+ * Calculates idle minutes from samples.
+ */
+export function calculateIdleMinutes(samples: any[]): number {
+    return samples.filter(s => s.idle === true).length;
 }
 
 /**

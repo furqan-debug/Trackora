@@ -36,6 +36,7 @@ export function AmountsOwed() {
         if (range === 'This Week') {
             start = new Date(now);
             start.setDate(now.getDate() - now.getDay());
+            start.setHours(0, 0, 0, 0);
         } else if (range === 'This Month') {
             start = new Date(now.getFullYear(), now.getMonth(), 1);
         } else {
@@ -45,36 +46,79 @@ export function AmountsOwed() {
         const [{ data: members }, { data: sessions }] = await Promise.all([
             supabase.from('members').select('id, full_name, pay_rate'),
             supabase.from('sessions')
-                .select('user_id, started_at, ended_at')
+                .select('id, user_id, started_at')
                 .gte('started_at', start.toISOString())
         ]);
 
-        if (members && sessions) {
-            const memberMap: Record<string, { name: string; pay_rate: number }> = {};
-            members.forEach(m => {
-                const key = m.id;
-                memberMap[key] = { name: m.full_name, pay_rate: m.pay_rate ?? 0 };
-            });
+        if (!members || !sessions) {
+            setLoading(false);
+            return;
+        }
 
-            const owedMap: Record<string, { mins: number; last: string }> = {};
-            sessions.forEach((s: any) => {
-                const uid = s.user_id;
-                if (!uid || !memberMap[uid]) return;
+        // Build a map of session_id -> user_id for quick lookup
+        const sessionToUser: Record<string, string> = {};
+        const sessionIds: string[] = [];
+        sessions.forEach((s: any) => {
+            sessionToUser[s.id] = s.user_id;
+            sessionIds.push(s.id);
+        });
 
-                if (!owedMap[uid]) owedMap[uid] = { mins: 0, last: s.started_at };
+        // Fetch all activity samples for these sessions (paginated)
+        let allSamples: any[] = [];
+        if (sessionIds.length > 0) {
+            const PAGE_SIZE = 1000;
+            for (let page = 0; page < 100; page++) {
+                const { data: samplesPage, error } = await supabase
+                    .from('activity_samples')
+                    .select('session_id, idle, recorded_at')
+                    .in('session_id', sessionIds)
+                    .gte('recorded_at', start.toISOString())
+                    .order('recorded_at', { ascending: true })
+                    .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-                const startMs = new Date(s.started_at).getTime();
-                const endMs = s.ended_at ? new Date(s.ended_at).getTime() : Date.now();
-                const durationMins = Math.max(0, (endMs - startMs) / 60000);
+                if (error || !samplesPage || samplesPage.length === 0) break;
+                allSamples.push(...samplesPage);
+                if (samplesPage.length < PAGE_SIZE) break;
+            }
+        }
 
-                owedMap[uid].mins += durationMins;
-                if (new Date(s.started_at) > new Date(owedMap[uid].last)) {
-                    owedMap[uid].last = s.started_at;
-                }
-            });
+        // Deduplicate: 1 unique sample per user per minute
+        const seen = new Set<string>();
+        const dedupedSamples: any[] = [];
+        allSamples.sort((a, b) => (a.recorded_at > b.recorded_at ? 1 : -1));
+        allSamples.forEach(s => {
+            const uid = sessionToUser[s.session_id];
+            if (!uid) return;
+            const minute = new Date(s.recorded_at).toISOString().substring(0, 16);
+            const key = `${uid}_${minute}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            dedupedSamples.push({ ...s, user_id: uid });
+        });
 
-            const result: OwedRow[] = Object.entries(owedMap).map(([uid, stats]) => {
-                const hours = stats.mins / 60;
+        // Calculate productive minutes per user: Total - Idle
+        const userMins: Record<string, { productive: number; lastTracked: string }> = {};
+        dedupedSamples.forEach(s => {
+            const uid = s.user_id;
+            if (!userMins[uid]) userMins[uid] = { productive: 0, lastTracked: s.recorded_at };
+            // Only count as productive if not idle
+            if (s.idle !== true) {
+                userMins[uid].productive += 1;
+            }
+            if (s.recorded_at > userMins[uid].lastTracked) {
+                userMins[uid].lastTracked = s.recorded_at;
+            }
+        });
+
+        const memberMap: Record<string, { name: string; pay_rate: number }> = {};
+        members.forEach(m => {
+            memberMap[m.id] = { name: m.full_name, pay_rate: m.pay_rate ?? 0 };
+        });
+
+        const result: OwedRow[] = Object.entries(userMins)
+            .filter(([uid]) => memberMap[uid])
+            .map(([uid, stats]) => {
+                const hours = stats.productive / 60;
                 const payRate = memberMap[uid].pay_rate;
                 return {
                     member_id: uid,
@@ -82,12 +126,11 @@ export function AmountsOwed() {
                     pay_rate: payRate,
                     totalHours: Math.round(hours * 100) / 100,
                     amountOwed: Math.round(hours * payRate * 100) / 100,
-                    lastTracked: new Date(stats.last).toLocaleDateString()
+                    lastTracked: new Date(stats.lastTracked).toLocaleDateString()
                 };
             }).sort((a, b) => b.amountOwed - a.amountOwed);
 
-            setData(result);
-        }
+        setData(result);
         setLoading(false);
     }
 
@@ -258,7 +301,7 @@ export function AmountsOwed() {
                     <div className="flex items-start gap-3 max-w-lg">
                         <Shield className="w-4 h-4 text-text-muted mt-0.5" />
                         <p className="text-[10px] font-medium text-text-muted uppercase leading-relaxed tracking-wider">
-                            Values are derived from cumulative session durations and pay rates. Actual payouts may vary by tax obligations and approved deductions.
+                            Hours are calculated as <strong>Productive Time = Total Tracked − Idle Time</strong>. Idle minutes are excluded from pay calculations. Actual payouts may vary by tax obligations and approved deductions.
                         </p>
                     </div>
                     <Button variant="primary" className="w-full md:w-auto px-8 py-3 shadow-sm hover:shadow-md">

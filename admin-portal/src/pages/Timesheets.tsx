@@ -104,10 +104,8 @@ export function Timesheets() {
             (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
 
             const memberTzMap: Record<string, string | undefined> = {};
-            const memberKeepIdleModeMap: Record<string, string> = {};
             members.forEach(m => { 
                 memberTzMap[m.id] = m.timezone; 
-                memberKeepIdleModeMap[m.id] = m.keep_idle_mode || 'prompt';
             });
 
             const dailyMap: Record<string, DailyEntry> = {};
@@ -149,14 +147,14 @@ export function Timesheets() {
                 dedupedSamples.push(s);
             });
 
-            // Count Active Minutes per Day
+            // Count Productive Minutes per Day (Total - Idle)
             dedupedSamples.forEach(a => {
                 const uid = sessionToUserId.get(a.session_id);
                 if (!uid) return;
-                
-                const keepIdleMode = memberKeepIdleModeMap[uid];
-                // Only filter if keepIdleMode is explicitly 'never' and activity is DEFINITELY 0
-                if (keepIdleMode === 'never' && a.activity_percent === 0) return;
+
+                // NEW FORMULA: a minute is productive if it's NOT marked as idle
+                // idle=true means idle time — do not count toward productive minutes
+                if (a.idle === true) return;
 
                 const memberTz = memberTzMap[uid];
                 const dateKey = getGroupingDateInTz(a.recorded_at, memberTz || selectedTz);
