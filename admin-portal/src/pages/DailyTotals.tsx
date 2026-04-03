@@ -64,12 +64,16 @@ export function DailyTotals() {
             
             const { data: sessions } = await sessQuery;
 
+            // Fetch samples — filter by session IDs to avoid fetching org-wide data
+            // when a specific member is selected (and to stay within pagination limits)
+            const filteredSessionIds = (sessions || []).map((s: any) => s.id);
             // Fetch samples
             const samples = await fetchAllActivitySamples(
                 supabase,
                 start.toISOString(),
                 end.toISOString(),
-                'session_id, recorded_at, idle, activity_percent'
+                'session_id, recorded_at, idle, activity_percent',
+                filteredSessionIds.length > 0 ? { sessionIds: filteredSessionIds } : undefined
             );
 
             if (members && sessions) {
@@ -108,7 +112,8 @@ export function DailyTotals() {
                 const stats: Record<string, number[]> = {};
 
                 userSamples.forEach((samples, uid) => {
-                    const limit = allMembers.find(m => m.id === uid)?.idle_limit ?? 10;
+                    // Use the locally fetched members data (not stale state) for idle_limit
+                    const limit = members?.find(m => m.id === uid)?.idle_limit ?? 10;
                     const sorted = samples.sort((a, b) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime());
                     
                     let currentBlock: any[] = [];

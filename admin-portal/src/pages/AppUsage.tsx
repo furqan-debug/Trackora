@@ -62,11 +62,16 @@ export function AppUsage() {
 
         // If a specific member is selected, we first need to grab their sessions
         // because activity_samples is keyed by session_id, not user_id directly.
+        // Include sessions that could span into this day (look back 24h)
         if (selectedMemberId !== 'all') {
+            const sessionFetchStart = new Date(new Date(start).getTime() - 24 * 60 * 60 * 1000).toISOString();
+
             const { data: userSessions } = await supabase
                 .from('sessions')
                 .select('id')
-                .eq('user_id', selectedMemberId);
+                .eq('user_id', selectedMemberId)
+                .gte('started_at', sessionFetchStart)
+                .lte('started_at', end);
 
             if (!userSessions || userSessions.length === 0) {
                 setApps([]);

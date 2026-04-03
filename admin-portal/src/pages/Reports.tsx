@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { 
-    Monitor, Camera, 
+import {
+    Monitor, Camera,
     Clock, Activity as ActivityIcon, Users,
     ChevronDown, Zap, Download, DollarSign
 } from 'lucide-react';
@@ -9,13 +9,13 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, AreaChart, Area
 } from 'recharts';
-import { 
-    PageLayout, Card, KpiCard, Button, 
-    LoadingState, EmptyState 
+import {
+    PageLayout, Card, KpiCard, Button,
+    LoadingState, EmptyState
 } from '../components/ui';
 import clsx from 'clsx';
-import { 
-    formatDuration, 
+import {
+    formatDuration,
     calculateActivityScore,
     getGroupingDateInTz,
     fetchAllActivitySamples,
@@ -82,7 +82,7 @@ export function Reports() {
         const { start, end } = getDateRange();
 
         let filteredMemberIds: string[] = [];
-        
+
         if (selectedMemberId !== 'All') {
             filteredMemberIds = [selectedMemberId];
         } else if (selectedTeamId !== 'All') {
@@ -114,6 +114,20 @@ export function Reports() {
                 filteredSessions = sessions.filter(s => teamMemberIds.has(s.user_id));
             }
 
+            // If a specific member/team was selected but they have no sessions, return early
+            if ((selectedMemberId !== 'All' || selectedTeamId !== 'All') && filteredSessions.length === 0) {
+                setDailyActivity([]);
+                setAppBreakdown([]);
+                setTotalSessions(0);
+                setScreenshotCount(0);
+                setTotalMins(0);
+                setAvgActivity(0);
+                setTotalCosts(0);
+                setTotalBilled(0);
+                setLoading(false);
+                return;
+            }
+
             const activeSessionIds = filteredSessions.map(s => s.id);
             
             // Fetch screenshots count and samples
@@ -124,9 +138,9 @@ export function Reports() {
 
             const [samples, { count: ssCount }] = await Promise.all([
                 fetchAllActivitySamples(
-                    supabase, 
-                    start, 
-                    end, 
+                    supabase,
+                    start,
+                    end,
                     'session_id, recorded_at, activity_percent, idle, app_name',
                     { sessionIds: activeSessionIds.length > 0 ? activeSessionIds : undefined }
                 ),
@@ -147,7 +161,14 @@ export function Reports() {
 
             const membersMap = new Map<string, any>();
             const memberTzs = new Map<string, string | undefined>();
-            members.forEach(m => {
+
+            // Fetch members inline to avoid stale state (race condition if fetchMembers
+            // hasn't resolved yet when this runs on initial member selection)
+            const membersForLookup = members.length > 0
+                ? members
+                : (await supabase.from('members').select('id, email, full_name, pay_rate, bill_rate, timezone').eq('status', 'Active')).data || [];
+
+            membersForLookup.forEach((m: any) => {
                 membersMap.set(m.id, m);
                 memberTzs.set(m.id, m.timezone);
             });
@@ -155,18 +176,18 @@ export function Reports() {
             // Deduplicate Samples (1 per user per minute)
             const seen = new Set<string>();
             const dedupedSamples: any[] = [];
-            
+
             // Sort to prefer high activity if duplicates exist
             const sortedSamples = [...filteredSamples].sort((a, b) => (b.activity_percent ?? 0) - (a.activity_percent ?? 0));
-            
+
             sortedSamples.forEach(s => {
                 const uid = sessionToUserId.get(s.session_id);
                 if (!uid) return;
-                
+
                 // Truncate to the minute
                 const minute = new Date(s.recorded_at).toISOString().substring(0, 16);
                 const key = `${uid}_${minute}`;
-                
+
                 if (seen.has(key)) return;
                 seen.add(key);
                 dedupedSamples.push(s);
@@ -180,11 +201,11 @@ export function Reports() {
             dedupedSamples.forEach(s => {
                 const uid = sessionToUserId.get(s.session_id);
                 if (!uid) return;
-                
+
                 const day = getGroupingDateInTz(s.recorded_at, memberTzs.get(uid));
-                
+
                 if (!dailyMap[day]) dailyMap[day] = { active: 0, total_samples: 0, total_minutes: 0 };
-                
+
                 totalActivitySum += (s.activity_percent || 0);
 
                 if (s.activity_percent && s.activity_percent > 0) {
@@ -249,24 +270,24 @@ export function Reports() {
                             </button>
                         ))}
                     </div>
-                    
+
                     <div className="flex items-center gap-3">
-                        <FilterSelect 
+                        <FilterSelect
                             icon={<Users className="w-4 h-4" />}
                             value={selectedTeamId}
                             onChange={(val) => { setSelectedTeamId(val); setSelectedMemberId('All'); }}
                             options={[{ id: 'All', name: 'All Teams' }, ...teams]}
                         />
-                        <FilterSelect 
+                        <FilterSelect
                             icon={<ActivityIcon className="w-4 h-4" />}
                             value={selectedMemberId}
                             onChange={(val) => { setSelectedMemberId(val); setSelectedTeamId('All'); }}
                             options={[{ id: 'All', name: 'All Members' }, ...members].map((m: any) => ({ id: m.id, name: m.full_name || m.email || m.name || 'Member' }))}
                         />
-                        <Button 
-                            variant="secondary" 
+                        <Button
+                            variant="secondary"
                             className="p-2.5 rounded-lg"
-                            onClick={() => {/* export logic */}}
+                            onClick={() => {/* export logic */ }}
                         >
                             <Download className="w-4 h-4" />
                         </Button>
@@ -328,9 +349,9 @@ export function Reports() {
                     </div>
                 ) : dailyActivity.length === 0 ? (
                     <div className="h-[600px] flex items-center justify-center">
-                        <EmptyState 
-                            title="No activity data found" 
-                            description="Try adjusting your filters or date range to see results." 
+                        <EmptyState
+                            title="No activity data found"
+                            description="Try adjusting your filters or date range to see results."
                         />
                     </div>
                 ) : (
@@ -347,28 +368,28 @@ export function Reports() {
                                                 </linearGradient>
                                             </defs>
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.03)" />
-                                            <XAxis 
-                                                dataKey="date" 
-                                                axisLine={false} 
-                                                tickLine={false} 
+                                            <XAxis
+                                                dataKey="date"
+                                                axisLine={false}
+                                                tickLine={false}
                                                 tick={{ fill: 'rgba(41,61,99,0.5)', fontSize: 11 }}
                                                 dy={10}
                                             />
-                                            <YAxis 
-                                                domain={[0, 100]} 
-                                                axisLine={false} 
-                                                tickLine={false} 
+                                            <YAxis
+                                                domain={[0, 100]}
+                                                axisLine={false}
+                                                tickLine={false}
                                                 tick={{ fill: 'rgba(41,61,99,0.5)', fontSize: 11 }}
                                                 unit="%"
                                             />
                                             <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(80,110,248,0.1)', strokeWidth: 1 }} />
-                                            <Area 
-                                                type="monotone" 
-                                                dataKey="activity" 
-                                                stroke="#506ef8" 
+                                            <Area
+                                                type="monotone"
+                                                dataKey="activity"
+                                                stroke="#506ef8"
                                                 strokeWidth={2}
-                                                fillOpacity={1} 
-                                                fill="url(#colorActivity)" 
+                                                fillOpacity={1}
+                                                fill="url(#colorActivity)"
                                             />
                                         </AreaChart>
                                     </ResponsiveContainer>
@@ -380,22 +401,22 @@ export function Reports() {
                                     <ResponsiveContainer width="100%" height="100%">
                                         <BarChart data={dailyActivity} barSize={36}>
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.03)" />
-                                            <XAxis 
-                                                dataKey="date" 
-                                                axisLine={false} 
-                                                tickLine={false} 
+                                            <XAxis
+                                                dataKey="date"
+                                                axisLine={false}
+                                                tickLine={false}
                                                 tick={{ fill: 'rgba(41,61,99,0.5)', fontSize: 11 }}
                                                 dy={10}
                                             />
-                                            <YAxis 
-                                                axisLine={false} 
-                                                tickLine={false} 
+                                            <YAxis
+                                                axisLine={false}
+                                                tickLine={false}
                                                 tick={{ fill: 'rgba(41,61,99,0.5)', fontSize: 11 }}
                                             />
                                             <Tooltip content={<CustomTooltip unit="min" />} cursor={{ fill: 'rgba(80,110,248,0.03)' }} />
-                                            <Bar 
-                                                dataKey="minutes" 
-                                                fill="url(#barGradient)" 
+                                            <Bar
+                                                dataKey="minutes"
+                                                fill="url(#barGradient)"
                                                 radius={[4, 4, 0, 0]}
                                             />
                                             <defs>
@@ -489,7 +510,7 @@ export function Reports() {
 
 function FilterSelect({ icon, value, onChange, options }: { icon: React.ReactNode; value: string; onChange: (val: string) => void; options: { id: string; name: string }[] }) {
     const activeLabel = options.find(o => o.id === value)?.name || value;
-    
+
     return (
         <div className="relative group">
             <div className="flex items-center gap-3 bg-surface-solid border border-border rounded-lg px-4 py-2 shadow-sm hover:border-primary/40 cursor-pointer">
@@ -497,7 +518,7 @@ function FilterSelect({ icon, value, onChange, options }: { icon: React.ReactNod
                 <span className="text-xs font-medium text-text-primary min-w-[100px] truncate">{activeLabel}</span>
                 <ChevronDown className="w-3.5 h-3.5 text-text-muted" />
             </div>
-            
+
             <select
                 value={value}
                 onChange={(e) => onChange(e.target.value)}

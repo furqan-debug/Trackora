@@ -7,6 +7,7 @@ import {
     PieChart, Pie, Cell, Legend
 } from 'recharts';
 import { PageLayout, Card, FilterSelect } from '../components/ui';
+import { fetchAllActivitySamples } from '../lib/dataUtils';
 
 interface DomainEntry {
     domain: string;
@@ -104,7 +105,7 @@ export function UrlTracking() {
             : new Date(startLocal.getTime() - startOffsetMins * 60000).toISOString();
         const end = new Date(now.getTime() - endOffsetMins * 60000).toISOString();
 
-        let sessionIds: string[] | null = null;
+        let sessionIds: string[] | undefined = undefined;
         if (selectedMemberId !== 'all') {
             // Only fetch sessions that could possibly overlap with this time range
             // We look back 24 hours from the start to catch long-running sessions
@@ -127,24 +128,22 @@ export function UrlTracking() {
             }
         }
 
-        let query = supabase
-            .from('activity_samples')
-            .select('domain, recorded_at')
-            .gte('recorded_at', start)
-            .lte('recorded_at', end)
-            .not('domain', 'is', null)
-            .neq('domain', '');
+        // Use paginated fetcher to avoid 1000-row limit
+        const rawSamples = await fetchAllActivitySamples(
+            supabase,
+            start,
+            end,
+            'domain, recorded_at',
+            sessionIds ? { sessionIds } : undefined
+        );
 
-        if (sessionIds && sessionIds.length > 0) {
-            query = query.in('session_id', sessionIds);
-        }
-
-        const { data } = await query;
+        // Filter to rows with actual domain data
+        const data = (rawSamples || []).filter(r => r.domain && r.domain !== '');
 
         const domainMap: Record<string, number> = {};
         const hourMap: Record<number, number> = {};
 
-        (data || []).forEach(row => {
+        data.forEach(row => {
             if (!row.domain) return;
             domainMap[row.domain] = (domainMap[row.domain] || 0) + 1;
             const h = new Date(row.recorded_at).getHours();

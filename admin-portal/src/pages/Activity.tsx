@@ -51,23 +51,30 @@ export function Activity() {
         });
     }, []);
 
-    useEffect(() => { fetchData(); }, [selectedDate, selectedMemberId]);
+    // Wait for members to be available before fetching (avoids race condition with timezone)
+    useEffect(() => {
+        // If a specific member is selected, we need members list to get their timezone.
+        // If members haven't loaded yet, skip — the effect will re-run once members load.
+        if (selectedMemberId !== 'all' && members.length === 0) return;
+        fetchData();
+    }, [selectedDate, selectedMemberId, members]);
 
     async function fetchData() {
         setLoading(true);
 
         const selectedMember = members.find(m => m.id === selectedMemberId);
-        const tz = selectedMember?.timezone || 'UTC';
+        // For 'all' members, use admin's local timezone (no offset needed)
+        // For a specific member, use their stored timezone
+        const tz = (selectedMemberId !== 'all' ? selectedMember?.timezone : null) || 'UTC';
 
         // Calculate the UTC window that corresponds to the selected date in the member's timezone.
-        // Strategy: find what UTC time = midnight in their timezone by parsing the offset precisely.
         const getUtcOffsetMinutes = (timezone: string, date: Date): number => {
             try {
                 const parts = new Intl.DateTimeFormat('en-US', {
                     timeZone: timezone,
                     timeZoneName: 'longOffset'
                 }).formatToParts(date);
-                const offsetStr = parts.find(p => p.type === 'timeZoneName')?.value ?? ''; // e.g. "GMT+05:00"
+                const offsetStr = parts.find(p => p.type === 'timeZoneName')?.value ?? '';
                 const match = offsetStr.match(/GMT([+-])(\d{2}):(\d{2})/);
                 if (match) {
                     const [, sign, hours, mins] = match;

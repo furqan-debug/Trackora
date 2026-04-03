@@ -80,11 +80,15 @@ export function Timesheets() {
             if (sessionErr) throw sessionErr;
 
             // Fetch all samples using the pagination helper
+            // When viewing a specific member, filter by their session IDs to avoid
+            // fetching org-wide data that gets dropped during processing
+            const sessionIds = (sessions || []).map(s => s.id);
             const activityData = await fetchAllActivitySamples(
                 supabase,
                 weekStart.toISOString(),
                 weekEnd.toISOString(),
-                'session_id, recorded_at, idle, activity_percent'
+                'session_id, recorded_at, idle, activity_percent',
+                sessionIds.length > 0 ? { sessionIds } : undefined
             );
 
             // Map samples to sessions to find the last known activity and for score calculation
