@@ -18,7 +18,8 @@ import {
     formatDuration, 
     calculateActivityScore,
     getGroupingDateInTz,
-    fetchAllActivitySamples
+    fetchAllActivitySamples,
+    fetchAllSessions
 } from '../lib/dataUtils';
 
 const COLORS = ['#506ef8', '#818cf8', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
@@ -102,29 +103,44 @@ export function Reports() {
             return;
         }
 
-        let sessionsQuery = supabase.from('sessions').select('id, user_id, started_at, ended_at').lt('started_at', end).or(`ended_at.is.null,ended_at.gt.${start}`);
-        let ssQuery = supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', start).lte('recorded_at', end);
-
-        if (filteredMemberIds.length > 0) {
-            sessionsQuery = sessionsQuery.in('user_id', filteredMemberIds);
-            ssQuery = ssQuery.in('user_id', filteredMemberIds);
-        }
-
         try {
-            const [samples, { data: sessions }, { count: ssCount }] = await Promise.all([
-                fetchAllActivitySamples(supabase, start, end, 'session_id, recorded_at, activity_percent, idle, app_name'),
-                sessionsQuery,
+            // Fetch all sessions in range (paginated)
+            const sessions = await fetchAllSessions(supabase, new Date(start), new Date(end), undefined, selectedMemberId !== 'All' ? selectedMemberId : undefined);
+            
+            // If we filtered by team, we need to filter sessions manually or fetch only for team
+            let filteredSessions = sessions;
+            if (selectedTeamId !== 'All' && selectedMemberId === 'All') {
+                const teamMemberIds = new Set(filteredMemberIds);
+                filteredSessions = sessions.filter(s => teamMemberIds.has(s.user_id));
+            }
+
+            const activeSessionIds = filteredSessions.map(s => s.id);
+            
+            // Fetch screenshots count and samples
+            let ssQuery = supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', start).lte('recorded_at', end);
+            if (filteredMemberIds.length > 0) {
+                ssQuery = ssQuery.in('user_id', filteredMemberIds);
+            }
+
+            const [samples, { count: ssCount }] = await Promise.all([
+                fetchAllActivitySamples(
+                    supabase, 
+                    start, 
+                    end, 
+                    'session_id, recorded_at, activity_percent, idle, app_name',
+                    { sessionIds: activeSessionIds.length > 0 ? activeSessionIds : undefined }
+                ),
                 ssQuery,
             ]);
 
             const allSamples = samples || [];
             const sessionToUserId = new Map();
-            (sessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
-            const activeSessionIds = new Set((sessions || []).map(s => s.id));
+            (filteredSessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
+            const activeSessionIdsSet = new Set(activeSessionIds);
 
             // NEW FORMULA: only include productive samples (idle=false or null)
             const filteredSamples = allSamples.filter(s => {
-                if (!activeSessionIds.has(s.session_id)) return false;
+                if (!activeSessionIdsSet.has(s.session_id)) return false;
                 // Idle samples are tracked but excluded from productive/billable time
                 return s.idle !== true;
             });
@@ -147,7 +163,7 @@ export function Reports() {
                 const uid = sessionToUserId.get(s.session_id);
                 if (!uid) return;
                 
-                // Truncate to the minute: 2026-03-27 18:26:12 -> 2026-03-27 18:26
+                // Truncate to the minute
                 const minute = new Date(s.recorded_at).toISOString().substring(0, 16);
                 const key = `${uid}_${minute}`;
                 
@@ -159,6 +175,7 @@ export function Reports() {
             const dailyMap: Record<string, { active: number; total_samples: number; total_minutes: number }> = {};
             let costs = 0;
             let billed = 0;
+            let totalActivitySum = 0;
 
             dedupedSamples.forEach(s => {
                 const uid = sessionToUserId.get(s.session_id);
@@ -168,7 +185,8 @@ export function Reports() {
                 
                 if (!dailyMap[day]) dailyMap[day] = { active: 0, total_samples: 0, total_minutes: 0 };
                 
-                // Activity % chart counts minutes with confirmed movement
+                totalActivitySum += (s.activity_percent || 0);
+
                 if (s.activity_percent && s.activity_percent > 0) {
                     dailyMap[day].active++;
                 }
@@ -177,7 +195,6 @@ export function Reports() {
 
                 const member = membersMap.get(uid);
                 if (member) {
-                    // Only bill/cost productive (non-idle) minutes
                     costs += (1 / 60) * (member.pay_rate || 0);
                     billed += (1 / 60) * (member.bill_rate || 0);
                 }
@@ -198,11 +215,12 @@ export function Reports() {
                 Object.entries(appMap).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, value]) => ({ name, value }))
             );
 
-            setTotalSessions((sessions || []).length);
+            setTotalSessions(filteredSessions.length);
             setScreenshotCount(ssCount || 0);
             setTotalMins(dedupedSamples.length);
-            setTotalCosts(Math.round(costs));
-            setTotalBilled(Math.round(billed));
+            setAvgActivity(dedupedSamples.length > 0 ? Math.round(totalActivitySum / dedupedSamples.length) : 0);
+            setTotalCosts(costs);
+            setTotalBilled(billed);
             setAvgActivity(calculateActivityScore(dedupedSamples));
         } catch (err) {
             console.error("fetchReports unhandled error:", err);

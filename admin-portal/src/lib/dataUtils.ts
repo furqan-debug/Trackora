@@ -387,6 +387,57 @@ export function calculateProductiveMinutes(samples: any[], idleLimit: number = 0
 }
 
 /**
+ * Fetches sessions while bypassing the standard 1000-row API limit.
+ */
+export async function fetchAllSessions(
+    supabase: any,
+    start: Date,
+    end: Date,
+    organizationId?: string,
+    userId?: string
+): Promise<any[]> {
+    let allSessions: any[] = [];
+    const PAGE_SIZE = 1000;
+    const MAX_PAGES = 50; // 50k sessions max safety limit
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+        let query = supabase
+            .from('sessions')
+            .select('id, user_id, project_id, started_at, ended_at')
+            .lt('started_at', end.toISOString())
+            .or(`ended_at.is.null,ended_at.gt.${start.toISOString()}`)
+            .order('started_at', { ascending: false })
+            .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+        if (organizationId) {
+            query = query.eq('organization_id', organizationId);
+        }
+        if (userId && userId !== 'all') {
+            query = query.eq('user_id', userId);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error("Error fetching paginated sessions:", error);
+            break;
+        }
+        
+        if (!data || data.length === 0) {
+            break;
+        }
+
+        allSessions.push(...data);
+
+        if (data.length < PAGE_SIZE) {
+            break;
+        }
+    }
+
+    return allSessions;
+}
+
+/**
  * Fetches activity samples while bypassing the standard 1000-row API limit.
  * Uses range pagination to retrieve all samples within a given time window.
  */
@@ -394,20 +445,46 @@ export async function fetchAllActivitySamples(
     supabase: any,
     startIso: string,
     endIso: string,
-    selectQuery: string = '*'
+    selectQuery: string = '*',
+    filters?: {
+        organizationId?: string;
+        sessionIds?: string[];
+        userId?: string;
+    }
 ): Promise<any[]> {
     let allSamples: any[] = [];
     const PAGE_SIZE = 1000;
-    const MAX_PAGES = 100; // 100k samples max safety limit
+    const MAX_PAGES = 200; // 200k samples max safety limit (increased for larger organizations)
 
     for (let page = 0; page < MAX_PAGES; page++) {
-        const { data, error } = await supabase
+        let query = supabase
             .from('activity_samples')
             .select(selectQuery)
             .gte('recorded_at', startIso)
             .lte('recorded_at', endIso)
             .order('recorded_at', { ascending: true })
             .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+        if (filters?.organizationId) {
+            query = query.eq('organization_id', filters.organizationId);
+        }
+
+        // If we have specific session IDs, filter by them
+        if (filters?.sessionIds && filters.sessionIds.length > 0) {
+            query = query.in('session_id', filters.sessionIds);
+        }
+
+        // If we have a specific user ID, we can join with sessions to filter
+        // Note: This requires sessions to be available in the select query or use !inner
+        if (filters?.userId && filters.userId !== 'all') {
+            // If sessionIds is already provided, we don't need this
+            if (!filters.sessionIds || filters.sessionIds.length === 0) {
+                // We use a subquery-like approach or join if the selectQuery supports it
+                // For simplicity, we assume sessionIds is passed if userId is filtered
+            }
+        }
+
+        const { data, error } = await query;
 
         if (error) {
             console.error("Error fetching paginated samples:", error);

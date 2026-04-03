@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchAllActivitySamples, fetchAllSessions } from '../lib/dataUtils';
 import { FileText, Search, Download, Filter, User, Clock, Users } from 'lucide-react';
 import { PageHeader, Card, Button } from '../components/ui';
 
@@ -37,54 +38,53 @@ export function ReportsLegacy() {
         else if (range === 'Last 7 Days') start = new Date(Date.now() - 7 * 86400000);
         else start = new Date(Date.now() - 30 * 86400000);
 
-        let sessionIds: string[] | null = null;
-        if (selectedMemberId !== 'all') {
-            const { data: userSessions } = await supabase.from('sessions').select('id').eq('user_id', selectedMemberId);
-            if (!userSessions || userSessions.length === 0) {
+        try {
+            const sessions = await fetchAllSessions(supabase, start, now, undefined, selectedMemberId);
+            const sessionIds = sessions.map(s => s.id);
+
+            if (selectedMemberId !== 'all' && (sessionIds.length === 0)) {
                 setData([]);
                 setLoading(false);
                 return;
             }
-            sessionIds = userSessions.map(s => s.id);
+
+            const [samples, { data: membersList }, { data: projects }] = await Promise.all([
+                fetchAllActivitySamples(
+                    supabase, 
+                    start.toISOString(), 
+                    now.toISOString(), 
+                    '*, sessions(user_id, project_id)',
+                    { sessionIds: sessionIds.length > 0 ? sessionIds : undefined }
+                ),
+                supabase.from('members').select('id, full_name'),
+                supabase.from('projects').select('id, name')
+            ]);
+
+            if (samples && membersList && projects) {
+                const memberMap: Record<string, string> = {};
+                membersList.forEach(m => {
+                    memberMap[m.id] = m.full_name;
+                });
+
+                const projectMap: Record<string, string> = {};
+                projects.forEach(p => {
+                    projectMap[p.id] = p.name;
+                });
+
+                const formatted = samples.map((s: any) => ({
+                    member: memberMap[s.sessions?.user_id] || s.sessions?.user_id?.slice(0, 8) || 'Unknown',
+                    project: projectMap[s.sessions?.project_id] || 'General',
+                    date: new Date(s.recorded_at).toLocaleString(),
+                    duration: 1, // each sample is roughly 1 min
+                    activity: s.activity_percent
+                }));
+                setData(formatted);
+            }
+        } catch (err) {
+            console.error("fetchLegacyData error:", err);
+        } finally {
+            setLoading(false);
         }
-
-        let samplesQuery = supabase.from('activity_samples').select('*, sessions(user_id, project_id)').gte('recorded_at', start.toISOString()).order('recorded_at', { ascending: false });
-        if (sessionIds && sessionIds.length > 0) {
-            samplesQuery = samplesQuery.in('session_id', sessionIds);
-        }
-
-        const [
-            { data: samples },
-            { data: membersList },
-            { data: projects }
-        ] = await Promise.all([
-            samplesQuery,
-            supabase.from('members').select('id, full_name'),
-            supabase.from('projects').select('id, name')
-        ]);
-
-        if (samples && membersList && projects) {
-            const memberMap: Record<string, string> = {};
-            membersList.forEach(m => {
-                const key = m.id;
-                memberMap[key] = m.full_name;
-            });
-
-            const projectMap: Record<string, string> = {};
-            projects.forEach(p => {
-                projectMap[p.id] = p.name;
-            });
-
-            const formatted = samples.map((s: any) => ({
-                member: memberMap[s.sessions?.user_id] || s.sessions?.user_id?.slice(0, 8) || 'Unknown',
-                project: projectMap[s.sessions?.project_id] || 'General',
-                date: new Date(s.recorded_at).toLocaleString(),
-                duration: 1, // each sample is roughly 1 min
-                activity: s.activity_percent
-            }));
-            setData(formatted);
-        }
-        setLoading(false);
     }
 
     const filtered = data.filter(d =>
