@@ -55,27 +55,66 @@ export function Activity() {
 
     async function fetchData() {
         setLoading(true);
-        const start = `${selectedDate}T00:00:00`;
-        const end = `${selectedDate}T23:59:59`;
+
+        const selectedMember = members.find(m => m.id === selectedMemberId);
+        const tz = selectedMember?.timezone || 'UTC';
+
+        // Calculate the UTC window that corresponds to the selected date in the member's timezone.
+        // Strategy: find what UTC time = midnight in their timezone by parsing the offset precisely.
+        const getUtcOffsetMinutes = (timezone: string, date: Date): number => {
+            try {
+                const parts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: timezone,
+                    timeZoneName: 'longOffset'
+                }).formatToParts(date);
+                const offsetStr = parts.find(p => p.type === 'timeZoneName')?.value ?? ''; // e.g. "GMT+05:00"
+                const match = offsetStr.match(/GMT([+-])(\d{2}):(\d{2})/);
+                if (match) {
+                    const [, sign, hours, mins] = match;
+                    const total = parseInt(hours) * 60 + parseInt(mins);
+                    return sign === '+' ? total : -total;
+                }
+            } catch { /* */ }
+            return 0;
+        };
+
+        // Use a reference point mid-day to get a stable offset for the selected date
+        const refPoint = new Date(`${selectedDate}T12:00:00Z`);
+        const offsetMinutes = getUtcOffsetMinutes(tz, refPoint);
+
+        // UTC time = local midnight - offset
+        // e.g. PKT is UTC+5 → local midnight = UTC 19:00 previous day
+        const startUtcMs = new Date(`${selectedDate}T00:00:00`).getTime() - offsetMinutes * 60000;
+        const endUtcMs = new Date(`${selectedDate}T23:59:59`).getTime() - offsetMinutes * 60000;
+
+        const start = new Date(startUtcMs).toISOString();
+        const end = new Date(endUtcMs).toISOString();
 
         let sessionIds: string[] | null = null;
         if (selectedMemberId !== 'all') {
+            // Only fetch sessions that could possibly overlap with this day
+            // We look back 24 hours from the start of the day to catch sessions that spanned across midnight
+            const sessionFetchStart = new Date(new Date(start).getTime() - 24 * 60 * 60 * 1000).toISOString();
+
             const { data: userSessions } = await supabase
                 .from('sessions')
                 .select('id')
-                .eq('user_id', selectedMemberId);
+                .eq('user_id', selectedMemberId)
+                .gte('started_at', sessionFetchStart)
+                .lte('started_at', end);
 
-            if (!userSessions || userSessions.length === 0) {
+            sessionIds = userSessions?.map(s => s.id) || [];
+
+            if (sessionIds.length === 0) {
                 setSamples([]);
                 setScreenshots([]);
                 setLoading(false);
                 return;
             }
-            sessionIds = userSessions.map(s => s.id);
         }
 
         let actQuery = supabase.from('activity_samples').select('*').gte('recorded_at', start).lte('recorded_at', end).order('recorded_at', { ascending: true });
-        let ssQuery = supabase.from('screenshots').select('*').gte('recorded_at', start).lte('recorded_at', end).order('recorded_at', { ascending: false }).limit(24);
+        let ssQuery = supabase.from('screenshots').select('*').gte('recorded_at', start).lte('recorded_at', end).order('recorded_at', { ascending: false }).limit(200);
 
         if (sessionIds && sessionIds.length > 0) {
             actQuery = actQuery.in('session_id', sessionIds);
@@ -105,34 +144,34 @@ export function Activity() {
     });
 
     const uniqueSamples = Array.from(uniqueMinMap.values());
-    
+
     const selectedMember = members.find(m => m.id === selectedMemberId);
 
     const totalClicks = uniqueSamples.reduce((a, b) => a + b.mouse_clicks, 0);
     const totalKeys = uniqueSamples.reduce((a, b) => a + b.key_presses, 0);
     const avgActivity = calculateActivityScore(uniqueSamples);
-    
+
     // NEW FORMULA: Productive = Total Tracked - Idle (idle=true samples excluded)
     const productiveMinutes = calculateProductiveMinutes(uniqueSamples);
-    
+
     const isToday = selectedDate === new Date().toISOString().split('T')[0];
     const dateLabel = isToday ? 'Live Timeline' : new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
     return (
-        <PageLayout 
-            title="Screen Captures" 
-            description={`${dateLabel} • Review work session screenshots and input activity.`} 
-            maxWidth="full" 
+        <PageLayout
+            title="Screen Captures"
+            description={`${dateLabel} • Review work session screenshots and input activity.`}
+            maxWidth="full"
             actions={
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                    <FilterSelect 
+                    <FilterSelect
                         icon={<Users className="w-5 h-5 text-primary" />}
                         value={selectedMemberId}
                         onChange={setSelectedMemberId}
                         options={[{ id: 'all', name: 'All Members' }, ...members.map(m => ({ id: m.id, name: m.full_name }))]}
                     />
-                    <div 
-                        className="relative group/date" 
+                    <div
+                        className="relative group/date"
                         onClick={() => dateInputRef.current?.showPicker()}
                     >
                         <div className="flex items-center gap-3 bg-surface-solid border border-border rounded-xl px-5 py-2.5 shadow-sm hover:border-primary transition-all cursor-pointer">
@@ -140,12 +179,12 @@ export function Activity() {
                             <span className="text-[10px] font-bold text-text-primary tracking-wider min-w-[100px] text-center">{selectedDate}</span>
                             <ChevronDown className="w-4 h-4 text-text-muted opacity-40 group-hover/date:translate-y-0.5 transition-transform" />
                         </div>
-                        <input 
+                        <input
                             ref={dateInputRef}
-                            type="date" 
-                            value={selectedDate} 
+                            type="date"
+                            value={selectedDate}
                             onChange={e => setSelectedDate(e.target.value)}
-                            className="absolute inset-0 w-full h-full opacity-0 pointer-events-none" 
+                            className="absolute inset-0 w-full h-full opacity-0 pointer-events-none"
                         />
                     </div>
                 </div>
@@ -182,7 +221,7 @@ export function Activity() {
                                 <TimelineGrid samples={uniqueSamples} targetTz={selectedMember?.timezone} />
                             </div>
                         </Card>
-                        
+
                         <Card className="lg:col-span-1 p-0 border-border bg-surface-solid shadow-sm rounded-2xl overflow-hidden">
                             <div className="px-8 py-5 border-b border-border bg-surface-subtle flex items-center gap-3">
                                 <div className="w-8 h-8 rounded-lg bg-surface-solid border border-border flex items-center justify-center text-primary shadow-sm">
@@ -197,7 +236,7 @@ export function Activity() {
                     </div>
 
                     <div className="mt-12">
-                         <div className="flex items-center gap-4 mb-8 px-4">
+                        <div className="flex items-center gap-4 mb-8 px-4">
                             <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg">
                                 <Monitor className="w-6 h-6" />
                             </div>
@@ -206,12 +245,12 @@ export function Activity() {
                                 <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">Visual history of work sessions</p>
                             </div>
                         </div>
-                        
+
                         <ScreenshotGallery screenshots={screenshots} onSelectImage={setEnlarged} />
                     </div>
                 </>
             )}
-            
+
             <ScreenshotLightbox enlarged={enlarged} setEnlarged={setEnlarged} />
         </PageLayout>
     );

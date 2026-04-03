@@ -18,6 +18,7 @@ interface DomainEntry {
 interface MemberInfo {
     id: string;
     full_name: string;
+    timezone?: string;
 }
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#14b8a6'];
@@ -48,40 +49,82 @@ export function UrlTracking() {
     const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
 
     useEffect(() => {
-        supabase.from('members').select('id, full_name').eq('status', 'Active').then(({ data }) => {
+        supabase.from('members').select('id, full_name, timezone').eq('status', 'Active').then(({ data }) => {
             if (data) setMembers(data);
         });
     }, []);
 
     useEffect(() => { fetchDomains(); }, [range, selectedMemberId]);
 
-    function getDateRange() {
-        const end = new Date().toISOString();
-        let start: string;
-        if (range === 'Today') start = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
-        else if (range === 'Last 7 Days') start = new Date(Date.now() - 7 * 86400000).toISOString();
-        else start = new Date(Date.now() - 30 * 86400000).toISOString();
-        return { start, end };
-    }
 
     async function fetchDomains() {
         setLoading(true);
-        const { start, end } = getDateRange();
+
+        const selectedMember = members.find(m => m.id === selectedMemberId);
+        const tz = selectedMember?.timezone || 'UTC';
+
+        // 1. Calculate the UTC range based on the member's timezone.
+        // Uses longOffset for precise parsing (e.g., "GMT+05:00") to avoid shortOffset ambiguity.
+        const getUtcOffsetMinutes = (timezone: string, date: Date): number => {
+            try {
+                const parts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: timezone,
+                    timeZoneName: 'longOffset'
+                }).formatToParts(date);
+                const offsetStr = parts.find(p => p.type === 'timeZoneName')?.value ?? '';
+                const match = offsetStr.match(/GMT([+-])(\d{2}):(\d{2})/);
+                if (match) {
+                    const [, sign, hours, mins] = match;
+                    const total = parseInt(hours) * 60 + parseInt(mins);
+                    return sign === '+' ? total : -total;
+                }
+            } catch { /* */ }
+            return 0;
+        };
+
+        const now = new Date();
+        let startLocal: Date;
+        if (range === 'Today') {
+            startLocal = new Date(now);
+            startLocal.setUTCHours(0, 0, 0, 0);
+            // Align to member's local midnight
+            const offsetMs = getUtcOffsetMinutes(tz, now) * 60000;
+            startLocal = new Date(startLocal.getTime() - offsetMs);
+        } else if (range === 'Last 7 Days') {
+            startLocal = new Date(now.getTime() - 7 * 86400000);
+        } else {
+            startLocal = new Date(now.getTime() - 30 * 86400000);
+        }
+
+        const startOffsetMins = getUtcOffsetMinutes(tz, startLocal);
+        const endOffsetMins = getUtcOffsetMinutes(tz, now);
+
+        const start = range === 'Today'
+            ? startLocal.toISOString()
+            : new Date(startLocal.getTime() - startOffsetMins * 60000).toISOString();
+        const end = new Date(now.getTime() - endOffsetMins * 60000).toISOString();
 
         let sessionIds: string[] | null = null;
         if (selectedMemberId !== 'all') {
+            // Only fetch sessions that could possibly overlap with this time range
+            // We look back 24 hours from the start to catch long-running sessions
+            const sessionFetchStart = new Date(new Date(start).getTime() - 24 * 60 * 60 * 1000).toISOString();
+
             const { data: userSessions } = await supabase
                 .from('sessions')
                 .select('id')
-                .eq('user_id', selectedMemberId);
+                .eq('user_id', selectedMemberId)
+                .gte('started_at', sessionFetchStart)
+                .lte('started_at', end);
 
-            if (!userSessions || userSessions.length === 0) {
+            sessionIds = userSessions?.map(s => s.id) || [];
+
+            if (sessionIds.length === 0) {
                 setDomains([]);
                 setHourlyData(Array.from({ length: 24 }, (_, h) => ({ hour: `${h}:00`, count: 0 })));
                 setLoading(false);
                 return;
             }
-            sessionIds = userSessions.map(s => s.id);
         }
 
         let query = supabase

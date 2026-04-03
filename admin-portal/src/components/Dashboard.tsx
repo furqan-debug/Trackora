@@ -10,10 +10,9 @@ import { PageLayout, Card, KpiCard, EmptyState, LoadingState } from './ui';
 import { 
     getEffectiveEnd,
     formatDuration,
-    flattenTimeRanges,
-    fetchAllActivitySamples
+    fetchAllActivitySamples,
+    calculateStatsFromSamples
 } from '../lib/dataUtils';
-import type { TimeInterval } from '../lib/dataUtils';
 
 interface DashStats {
     todayMinutes: number;
@@ -66,22 +65,19 @@ export function Dashboard() {
             ] = await Promise.all([
                 supabase.from('sessions').select('id, user_id, project_id, started_at, ended_at'),
                 supabase.from('projects').select('id, name, color'),
-                supabase.from('members').select('id, pay_rate'),
-                fetchAllActivitySamples(supabase, weekStart.toISOString(), now.toISOString(), 'session_id, recorded_at'),
+                supabase.from('members').select('id, pay_rate, idle_limit'),
+                fetchAllActivitySamples(supabase, weekStart.toISOString(), now.toISOString(), 'session_id, recorded_at, idle'),
                 supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', weekStart.toISOString()),
             ]);
 
-            // Map samples to sessions for activity filtering
-            const activityData = activityDataRaw;
-            const sessionHasActivity: Record<string, boolean> = {};
-            const lastSampleAtMap: Record<string, string> = {};
-            (activityData || []).forEach(a => {
-                sessionHasActivity[a.session_id] = true;
-                if (!lastSampleAtMap[a.session_id] || a.recorded_at > lastSampleAtMap[a.session_id]) {
-                    lastSampleAtMap[a.session_id] = a.recorded_at;
-                }
+            // Map samples to sessions and projects
+            const sessionToProjectMap: Record<string, string> = {};
+            const sessionToUserMap: Record<string, string> = {};
+            (rawSessions || []).forEach(s => {
+                sessionToProjectMap[s.id] = s.project_id;
+                sessionToUserMap[s.id] = s.user_id;
             });
-            
+
             const memberRateMap: Record<string, number> = {};
             (membersData || []).forEach(m => { memberRateMap[m.id] = m.pay_rate ?? 0; });
 
@@ -90,51 +86,155 @@ export function Dashboard() {
             const projectMinMap: Record<string, number> = {};
             const dayMinMap: number[] = Array(7).fill(0);
             
-            // Group for flattening
-            const userDayIntervals: Record<string, Record<number, TimeInterval[]>> = {};
-
-            const weekSessions = (rawSessions || []).filter(s => new Date(s.started_at) >= weekStart);
+            let weekMinsProductive = 0;
+            let weekMinsTotal = 0;
+            let weekCost = 0;
+            let todayMinsProductive = 0;
+            let todayMinsTotal = 0;
             
-            weekSessions.forEach(s => {
-                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at, lastSampleAtMap[s.id]);
-                const startMs = new Date(s.started_at).getTime();
-                const dayIdx = new Date(s.started_at).getDay();
-                const hasActivity = !!sessionHasActivity[s.id];
+            const todayStr = now.toISOString().split('T')[0];
 
-                if (s.user_id) {
-                    uniqueMembers.add(s.user_id);
-                    if (!userDayIntervals[s.user_id]) userDayIntervals[s.user_id] = {};
-                    if (!userDayIntervals[s.user_id][dayIdx]) userDayIntervals[s.user_id][dayIdx] = [];
-                    userDayIntervals[s.user_id][dayIdx].push({ startMs, endMs, hasActivity });
+            // 1. Calculate Total Durations from Sessions (Start-Stop)
+            (rawSessions || []).forEach(s => {
+                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at);
+                const startMs = new Date(s.started_at).getTime();
+                const durationMins = (endMs - startMs) / 60000;
+                
+                const userId = s.user_id;
+                uniqueMembers.add(userId);
+                
+                const dateStr = s.started_at.split('T')[0];
+                weekMinsTotal += durationMins;
+                if (dateStr === todayStr) {
+                    todayMinsTotal += durationMins;
                 }
 
-                if (s.project_id && hasActivity) {
-                    uniqueProjects.add(s.project_id);
-                    const mins = Math.max(0, (endMs - startMs) / 60000);
-                    projectMinMap[s.project_id] = (projectMinMap[s.project_id] || 0) + mins;
+                // Temporary productive - will subtract idle later
+                weekMinsProductive += durationMins;
+                if (dateStr === todayStr) {
+                    todayMinsProductive += durationMins;
                 }
             });
 
-            let weekMins = 0;
-            let weekCost = 0;
-            let todayMins = 0;
-            const todayIdx = now.getDay();
+            // 2. Subtract Idle Time and update Project/Day breakdowns
+            const userIdleLimitMap: Record<string, number> = {};
+            (membersData || []).forEach(m => { 
+                memberRateMap[m.id] = m.pay_rate ?? 0; 
+                userIdleLimitMap[m.id] = m.idle_limit ?? 10;
+            });
 
-            // Calculate flattened totals
-            Object.entries(userDayIntervals).forEach(([uid, days]) => {
-                const rate = memberRateMap[uid] ?? 0;
-                Object.entries(days).forEach(([dIdxStr, intervals]) => {
-                    const dIdx = parseInt(dIdxStr);
-                    const flatMins = flattenTimeRanges(intervals);
-                    
-                    weekMins += flatMins;
-                    weekCost += (flatMins / 60) * rate;
-                    dayMinMap[dIdx] += flatMins;
-                    
-                    if (dIdx === todayIdx) {
-                        todayMins += flatMins;
+            // Group samples by user to calculate their specific idle blocks
+            const userSamplesMap = new Map<string, any[]>();
+            (activityDataRaw || []).forEach(samp => {
+                const userId = sessionToUserMap[samp.session_id];
+                if (!userId) return;
+                if (!userSamplesMap.has(userId)) userSamplesMap.set(userId, []);
+                userSamplesMap.get(userId)!.push(samp);
+            });
+
+            userSamplesMap.forEach((userSamples, userId) => {
+                const limit = userIdleLimitMap[userId] || 10;
+                
+                // Calculate week stats for this user
+                const weekStats = calculateStatsFromSamples(userSamples, limit);
+                weekMinsProductive -= weekStats.idleMinutes;
+
+                // Calculate today stats for this user
+                const todaySamples = userSamples.filter(s => s.recorded_at.split('T')[0] === todayStr);
+                const todayStats = calculateStatsFromSamples(todaySamples, limit);
+                todayMinsProductive -= todayStats.idleMinutes;
+
+                // Update Project and Day breakdowns (Productive Only)
+                // We need to know which specific samples were "kept" as productive
+                // A sample is "kept productive" if it's NOT idle OR it's idle but part of a block < limit.
+                
+                // Re-calculate stats but this time we need the underlying "is this minute productive" flag
+                // Let's add a helper or logic to identify productive minutes
+                const minuteMap = new Map<string, any>();
+                userSamples.forEach(s => {
+                    const minute = s.recorded_at.substring(0, 16);
+                    if (!minuteMap.has(minute) || (minuteMap.get(minute).idle && !s.idle)) {
+                        minuteMap.set(minute, s);
                     }
                 });
+                const dedupedSorted = Array.from(minuteMap.values()).sort((a, b) => 
+                    new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime()
+                );
+
+                let currentBlock: any[] = [];
+                const productiveMinutes = new Set<string>(); // minute keys that are productive
+
+                for (let i = 0; i < dedupedSorted.length; i++) {
+                    const s = dedupedSorted[i];
+                    const prev = i > 0 ? dedupedSorted[i-1] : null;
+                    const gapMs = prev ? (new Date(s.recorded_at).getTime() - new Date(prev.recorded_at).getTime()) : 0;
+                    const isContiguous = prev && gapMs <= 125000;
+
+                    if (s.idle && isContiguous) {
+                        currentBlock.push(s);
+                    } else if (s.idle && !prev) {
+                        currentBlock = [s];
+                    } else if (s.idle && !isContiguous) {
+                        // End prev block
+                        if (currentBlock.length < limit) {
+                            currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
+                        }
+                        currentBlock = [s];
+                    } else {
+                        // This sample is productive
+                        productiveMinutes.add(s.recorded_at.substring(0, 16));
+                        // End previous idle block
+                        if (currentBlock.length < limit) {
+                            currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
+                        }
+                        currentBlock = [];
+                    }
+                }
+                if (currentBlock.length < limit) {
+                    currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
+                }
+
+                // Final pass: Update charts with minutes that survived as productive
+                dedupedSorted.forEach(s => {
+                    if (productiveMinutes.has(s.recorded_at.substring(0, 16))) {
+                        const recordedAt = new Date(s.recorded_at);
+                        dayMinMap[recordedAt.getDay()] += 1;
+
+                        const pId = sessionToProjectMap[s.session_id];
+                        if (pId) {
+                            uniqueProjects.add(pId);
+                            projectMinMap[pId] = (projectMinMap[pId] || 0) + 1;
+                        }
+                    }
+                });
+            });
+
+            // Ensure we don't go negative and update cost
+            weekMinsProductive = Math.max(0, weekMinsProductive);
+            todayMinsProductive = Math.max(0, todayMinsProductive);
+
+            // Final total logic for display (User usually wants "Tracked" as the main total, or "Productive"?)
+            // The user said "productive time is just minus idle time from the total time".
+            // I'll keep weekMins as the Productive time for the KPI and add a "Total Tracked" label if needed,
+            // or just use Productive for the main big number.
+            // Recalculate cost based on productive time
+            // Sum costs per session by applying member pay rates
+            weekCost = 0;
+            (rawSessions || []).forEach(sess => {
+                const userId = sess.user_id;
+                const rate = memberRateMap[userId] || 0;
+                
+                // Get duration for this session
+                const { endMs } = getEffectiveEnd(sess.started_at, sess.ended_at);
+                const startMs = new Date(sess.started_at).getTime();
+                const totalMins = (endMs - startMs) / 60000;
+                
+                // Subtract idle samples for this session
+                const sessionSamples = activityDataRaw.filter(samp => samp.session_id === sess.id);
+                const idleMins = sessionSamples.filter(samp => samp.idle === true).length;
+                
+                const productiveMins = Math.max(0, totalMins - idleMins);
+                weekCost += (productiveMins / 60) * rate;
             });
 
             const projectMap: Record<string, string> = {};
@@ -160,8 +260,8 @@ export function Dashboard() {
             }));
 
             setStats({
-                todayMinutes: todayMins,
-                weekMinutes: weekMins,
+                todayMinutes: todayMinsProductive,
+                weekMinutes: weekMinsProductive,
                 weekCost: Math.round(weekCost * 100) / 100,
                 activeMembers: uniqueMembers.size,
                 activeProjects: uniqueProjects.size,
@@ -293,28 +393,91 @@ export function Dashboard() {
 
 function RecentSessionsRows() {
     const [sessions, setSessions] = useState<any[]>([]);
-    const [memberMap, setMemberMap] = useState<Record<string, string>>({});
     const [projectMap, setProjectMap] = useState<Record<string, any>>({});
+    const [sessionMinsMap, setSessionMinsMap] = useState<Record<string, number>>({});
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         async function load() {
             try {
-                const [{ data }, { data: mData }, { data: pData }] = await Promise.all([
-                    supabase.from('sessions').select('*').order('started_at', { ascending: false }).limit(8),
-                    supabase.from('members').select('id, full_name'),
+                const now = new Date();
+                const weekStart = new Date(now); 
+                weekStart.setDate(now.getDate() - now.getDay()); 
+                weekStart.setHours(0, 0, 0, 0);
+
+                // Fetch all members to show complete team status
+                const { data: mData, error: mErr } = await supabase.from('members').select('id, full_name, idle_limit, timezone');
+                if (mErr) throw mErr;
+                
+                const memberIds = (mData || []).map(m => m.id);
+                
+                // Fetch recent sessions for all members
+                const { data: sData, error: sErr } = await supabase.from('sessions')
+                    .select('*')
+                    .in('user_id', memberIds)
+                    .order('started_at', { ascending: false });
+                if (sErr) throw sErr;
+
+                const [{ data: pData }, activityDataRaw] = await Promise.all([
                     supabase.from('projects').select('id, name, color'),
+                    fetchAllActivitySamples(supabase, weekStart.toISOString(), now.toISOString(), 'session_id, recorded_at, idle'),
                 ]);
 
-                const mMap: Record<string, string> = {};
-                (mData || []).forEach(m => { mMap[m.id] = m.full_name; });
-                setMemberMap(mMap);
+                // Map samples to sessions to count idle minutes
+                const idleMinsMap: Record<string, number> = {};
+                const seenInSession = new Set<string>(); // "sessionId-minute"
+
+                (activityDataRaw || []).forEach(samp => {
+                    const minuteKey = `${samp.session_id}-${samp.recorded_at.substring(0, 16)}`;
+                    if (seenInSession.has(minuteKey)) return;
+                    seenInSession.add(minuteKey);
+                    
+                    if (samp.idle === true) {
+                        idleMinsMap[samp.session_id] = (idleMinsMap[samp.session_id] || 0) + 1;
+                    }
+                });
+                setSessionMinsMap(idleMinsMap); 
 
                 const pMap: Record<string, any> = {};
                 (pData || []).forEach(p => { pMap[p.id] = p; });
                 setProjectMap(pMap);
 
-                setSessions(data || []);
+                // Process: Key is memberId, value is their latest session
+                const memberLatestSession = new Map<string, any>();
+                (sData || []).forEach(s => {
+                    if (!memberLatestSession.has(s.user_id)) {
+                        memberLatestSession.set(s.user_id, s);
+                    }
+                });
+
+                // Combine and sort according to requested priority
+                const result = (mData || []).map(m => {
+                    const session = memberLatestSession.get(m.id);
+                    let status: 'active' | 'offline' = 'offline';
+                    if (session) {
+                        const { isLive } = getEffectiveEnd(session.started_at, session.ended_at);
+                        if (isLive) status = 'active';
+                    }
+                    return { member: m, session, status };
+                });
+
+                result.sort((a, b) => {
+                    // 1. Status: Active first
+                    if (a.status === 'active' && b.status !== 'active') return -1;
+                    if (a.status !== 'active' && b.status === 'active') return 1;
+
+                    // 2. If both active: Sort by Name ascending (A-Z)
+                    if (a.status === 'active' && b.status === 'active') {
+                        return a.member.full_name.localeCompare(b.member.full_name);
+                    }
+
+                    // 3. Both offline: Most recent activity first
+                    const aTime = a.session ? new Date(a.session.started_at).getTime() : 0;
+                    const bTime = b.session ? new Date(b.session.started_at).getTime() : 0;
+                    return bTime - aTime;
+                });
+
+                setSessions(result);
             } catch (err) {
                 console.error(err);
             } finally {
@@ -334,16 +497,40 @@ function RecentSessionsRows() {
                     <tr className="bg-surface-subtle/30 border-b border-border">
                         <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-wider">Team Member</th>
                         <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-wider">Project</th>
-                        <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-wider">Started</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-wider">Start Time</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-wider">End Time</th>
                         <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-wider">Duration</th>
                         <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-wider text-right">Status</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-border/40">
-                    {sessions.map(s => {
+                    {sessions.map(item => {
+                        const { member: m, session: s } = item;
+                        if (!s) {
+                             return (
+                                <tr key={m.id} className="hover:bg-primary/[0.01] transition-colors group">
+                                    <td className="px-6 py-5">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-10 h-10 rounded-lg bg-surface-subtle border border-border flex items-center justify-center text-text-primary font-bold text-[13px] group-hover:bg-primary group-hover:text-white transition-colors">
+                                                {m.full_name.charAt(0).toUpperCase()}
+                                            </div>
+                                            <span className="font-semibold text-text-primary text-sm tracking-tight group-hover:text-primary transition-colors">{m.full_name}</span>
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-5 text-center" colSpan={4}>
+                                        <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted opacity-30 italic">No Recent Activity</span>
+                                    </td>
+                                    <td className="px-6 py-5 text-right">
+                                         <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted opacity-30">Offline</span>
+                                    </td>
+                                </tr>
+                             );
+                        }
+
                         const { endMs, isLive, isStale } = getEffectiveEnd(s.started_at, s.ended_at);
-                        const dur = Math.max(0, Math.round((endMs - new Date(s.started_at).getTime()) / 60000));
-                        const mName = memberMap[s.user_id] || 'Unknown User';
+                        const totalMins = (endMs - new Date(s.started_at).getTime()) / 60000;
+                        const idleMins = sessionMinsMap[s.id] || 0;
+                        const productiveMins = Math.max(0, totalMins - idleMins);
                         const proj = projectMap[s.project_id];
 
                         return (
@@ -351,9 +538,9 @@ function RecentSessionsRows() {
                                 <td className="px-6 py-5">
                                     <div className="flex items-center gap-4">
                                         <div className="w-10 h-10 rounded-lg bg-surface-subtle border border-border flex items-center justify-center text-text-primary font-bold text-[13px] group-hover:bg-primary group-hover:text-white transition-colors">
-                                            {mName.charAt(0).toUpperCase()}
+                                            {m.full_name.charAt(0).toUpperCase()}
                                         </div>
-                                        <span className="font-semibold text-text-primary text-sm tracking-tight group-hover:text-primary transition-colors">{mName}</span>
+                                        <span className="font-semibold text-text-primary text-sm tracking-tight group-hover:text-primary transition-colors">{m.full_name}</span>
                                     </div>
                                 </td>
                                 <td className="px-6 py-5">
@@ -366,11 +553,28 @@ function RecentSessionsRows() {
                                         <span className="text-text-muted/40 text-[10px] uppercase font-bold tracking-widest">Unassigned</span>
                                     )}
                                 </td>
-                                <td className="px-6 py-5 text-text-primary font-semibold text-sm opacity-70">
-                                    {new Date(s.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                <td className="px-6 py-5 text-text-primary font-semibold text-sm opacity-70 whitespace-nowrap">
+                                    {new Date(s.started_at).toLocaleTimeString([], { 
+                                        hour: '2-digit', 
+                                        minute: '2-digit', 
+                                        timeZone: m.timezone || undefined,
+                                        timeZoneName: 'short'
+                                    })}
+                                </td>
+                                <td className="px-6 py-5 text-text-primary font-semibold text-sm opacity-70 whitespace-nowrap">
+                                    {isLive ? (
+                                        <span className="italic text-primary opacity-60">Running</span>
+                                    ) : (
+                                        new Date(endMs).toLocaleTimeString([], { 
+                                            hour: '2-digit', 
+                                            minute: '2-digit', 
+                                            timeZone: m.timezone || undefined,
+                                            timeZoneName: 'short'
+                                        })
+                                    )}
                                 </td>
                                 <td className="px-6 py-5 font-semibold text-text-primary text-sm">
-                                    {formatDuration(dur)}
+                                    {formatDuration(productiveMins)}
                                 </td>
                                 <td className="px-6 py-5 text-right">
                                     {isLive ? (

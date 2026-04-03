@@ -305,22 +305,85 @@ export function getHubstaffBlocks(samples: any[], targetTz?: string | null): Hub
 }
 
 /**
- * Calculates total productive minutes from samples.
- * Formula: Productive = Total Tracked - Idle
- * Each sample represents 1 minute. Samples where idle=true are counted as idle time, not productive.
- * The keepIdle parameter is kept for backwards-compat but no longer used for pay/time calculation.
+ * Calculates total productive and idle minutes from activity samples.
+ * Deduplicates by minute to ensure accuracy if multiple samples exist for the same minute.
+ * 
+ * Threshold-aware: Only counts idle minutes if they form a contiguous block
+ * >= idleLimit (in minutes).
  */
-export function calculateProductiveMinutes(samples: any[]): number {
-    // Productive = Total samples - idle samples
-    const idleCount = samples.filter(s => s.idle === true).length;
-    return Math.max(0, samples.length - idleCount);
+export function calculateStatsFromSamples(samples: any[], idleLimit: number = 0) {
+    if (!samples || samples.length === 0) {
+        return { totalMinutes: 0, productiveMinutes: 0, idleMinutes: 0 };
+    }
+
+    // 1. Deduplicate by minute (YYYY-MM-DDTHH:mm) and sort
+    const minuteMap = new Map<string, any>();
+    samples.forEach(s => {
+        const minute = new Date(s.recorded_at).toISOString().substring(0, 16);
+        // If duplicates exist, prefer non-idle ones for accuracy
+        if (!minuteMap.has(minute) || (minuteMap.get(minute).idle && !s.idle)) {
+            minuteMap.set(minute, s);
+        }
+    });
+
+    const dedupedSorted = Array.from(minuteMap.values()).sort((a, b) => 
+        new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime()
+    );
+
+    const totalMinutes = dedupedSorted.length;
+    let actualIdleMins = 0;
+
+    if (idleLimit <= 1) {
+        // If threshold is 1 or less, use standard logic
+        actualIdleMins = dedupedSorted.filter(s => s.idle).length;
+    } else {
+        // Block-aware idle detection: Only subtract if idle for >= idleLimit
+        let currentBlock: any[] = [];
+        
+        for (let i = 0; i < dedupedSorted.length; i++) {
+            const s = dedupedSorted[i];
+            const prev = i > 0 ? dedupedSorted[i - 1] : null;
+
+            // Check if this sample is contiguous (within 2 minutes spread max to account for sync jitter)
+            const gapMs = prev ? (new Date(s.recorded_at).getTime() - new Date(prev.recorded_at).getTime()) : 0;
+            const isContiguous = prev && gapMs <= 125000; // 2 mins max to handle slight delays
+
+            if (s.idle && isContiguous) {
+                currentBlock.push(s);
+            } else if (s.idle && !prev) {
+                currentBlock = [s];
+            } else if (s.idle && !isContiguous) {
+                // New block started after a gap
+                if (currentBlock.length >= idleLimit) actualIdleMins += currentBlock.length;
+                currentBlock = [s];
+            } else {
+                // Not idle 
+                if (currentBlock.length >= idleLimit) actualIdleMins += currentBlock.length;
+                currentBlock = [];
+            }
+        }
+        // Final block check
+        if (currentBlock.length >= idleLimit) actualIdleMins += currentBlock.length;
+    }
+
+    return { 
+        totalMinutes, 
+        idleMinutes: actualIdleMins, 
+        productiveMinutes: Math.max(0, totalMinutes - actualIdleMins) 
+    };
+}
+
+export function calculateIdleMinutes(samples: any[], idleLimit: number = 0): number {
+    const stats = calculateStatsFromSamples(samples, idleLimit);
+    return stats.idleMinutes;
 }
 
 /**
- * Calculates idle minutes from samples.
+ * Compatibility wrapper for productive minutes calculation.
  */
-export function calculateIdleMinutes(samples: any[]): number {
-    return samples.filter(s => s.idle === true).length;
+export function calculateProductiveMinutes(samples: any[], idleLimit: number = 0): number {
+    const stats = calculateStatsFromSamples(samples, idleLimit);
+    return stats.productiveMinutes;
 }
 
 /**

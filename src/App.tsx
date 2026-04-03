@@ -326,6 +326,18 @@ export default function App() {
   const [updateInstalling, setUpdateInstalling] = useState(false);
   const memberSubscriptionRef = useRef<any>(null);
 
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (isTracking) {
+        // Use the non-async version or fire and forget if necessary, 
+        // but for Tauri/Browser we want to attempt closure.
+        trackerAPI.stopTracking();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isTracking]);
+
   async function fetchDashboardStats(userId: string, currentProjects: Project[]) {
     try {
       const sb = await getSupabase();
@@ -455,30 +467,73 @@ export default function App() {
         dedupedSamples.push(s);
       });
 
-      dedupedSamples.forEach((samp: any) => {
-        const pid = samp.sessions?.project_id;
-        if (!pid || !statsMap[pid]) return;
+      // Use the user's idle_limit (default to 10)
+      const idleLimit = user?.idle_limit ?? 10;
 
-        // NEW FORMULA: Always count every sample toward tracked time.
-        // Idle time (idle=true) is tracked separately but still counts toward total.
-        const isIdle = samp.idle === true;
+      // Group samples by project to calculate threshold-aware stats
+      const samplesByProject = new Map<string, any[]>();
+      dedupedSamples.forEach(s => {
+          const pid = s.sessions?.project_id;
+          if (!pid || !statsMap[pid]) return;
+          if (!samplesByProject.has(pid)) samplesByProject.set(pid, []);
+          samplesByProject.get(pid)!.push(s);
+      });
 
-        const dateStr = fmt.format(new Date(samp.recorded_at));
+      samplesByProject.forEach((projectSamples, pid) => {
+          const sorted = projectSamples.sort((a, b) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime());
+          
+          let currentBlock: any[] = [];
+          const countedAsIdle = new Set<string>(); // minutes (recorded_at strings)
 
-        // Every sample represents 1 minute (60s) of tracked time
-        statsMap[pid].weeklySeconds += 60;
-        if (isIdle) {
-          statsMap[pid].weeklyIdleSeconds += 60;
-        }
-        if (dateStr === todayStr) {
-          statsMap[pid].todaySeconds += 60;
-          if (isIdle) {
-            statsMap[pid].keptIdleSeconds += 60;
+          for (let i = 0; i < sorted.length; i++) {
+              const s = sorted[i];
+              const prev = i > 0 ? sorted[i-1] : null;
+
+              const gapMs = prev ? (new Date(s.recorded_at).getTime() - new Date(prev.recorded_at).getTime()) : 0;
+              const isContiguous = prev && gapMs <= 125000;
+
+              if (s.idle && isContiguous) {
+                  currentBlock.push(s);
+              } else if (s.idle && !prev) {
+                  currentBlock = [s];
+              } else if (s.idle && !isContiguous) {
+                  // End of a non-contiguous idle block
+                  if (currentBlock.length >= idleLimit) {
+                      currentBlock.forEach(b => countedAsIdle.add(b.recorded_at));
+                  }
+                  currentBlock = [s];
+              } else {
+                  // Non-idle sample encountered
+                  if (currentBlock.length >= idleLimit) {
+                      currentBlock.forEach(b => countedAsIdle.add(b.recorded_at));
+                  }
+                  currentBlock = [];
+              }
           }
-        }
+          // Final block check
+          if (currentBlock.length >= idleLimit) {
+              currentBlock.forEach(b => countedAsIdle.add(b.recorded_at));
+          }
 
-        statsMap[pid].totalActivity += (samp.activity_percent ?? 0);
-        statsMap[pid].sampleCount++;
+          sorted.forEach(samp => {
+              const dateStr = fmt.format(new Date(samp.recorded_at));
+              const isIdle = countedAsIdle.has(samp.recorded_at);
+
+              // Every sample represents 1 minute (60s) of tracked time
+              statsMap[pid].weeklySeconds += 60;
+              if (isIdle) {
+                  statsMap[pid].weeklyIdleSeconds += 60;
+              }
+              if (dateStr === todayStr) {
+                  statsMap[pid].todaySeconds += 60;
+                  if (isIdle) {
+                      statsMap[pid].keptIdleSeconds += 60;
+                  }
+              }
+
+              statsMap[pid].totalActivity += (samp.activity_percent ?? 0);
+              statsMap[pid].sampleCount++;
+          });
       });
 
       const updatedProjects = currentProjects.map(p => ({
@@ -640,50 +695,54 @@ export default function App() {
   useEffect(() => {
     if (!isTracking || (user && user.idle_enabled === false)) return;
 
-    const unlistenPromise = trackerAPI.onTrackingSample((sample: any) => {
-      // Count as idle if Rust idle flag is true OR if activity_percent is 0
-      // (tiny cursor nudges can keep idle=false but still show 0% activity)
-      const isIdleSample = sample.idle === true || (sample.activity_percent ?? 100) === 0;
-      if (isIdleSample) {
-        idleMinutesRef.current += 1;
-        setLiveIdleSeconds(prev => prev + 60); // track live idle for display
-        const limit = user?.idle_limit || 10;
-        if (idleMinutesRef.current >= limit && !isPaused) {
-          const mode = user?.keep_idle_mode || 'prompt';
-          
-          // Retroactively mark those samples idle=true in DB so dashboard is accurate
-          markSamplesAsIdle(limit);
+    let unlisten: (() => void) | null = null;
 
-          if (mode === 'always') {
-            idleMinutesRef.current = 0;
-            return;
-          }
+    const setupListener = async () => {
+      unlisten = await trackerAPI.onTrackingSample((sample: any) => {
+        // Count as idle if Rust idle flag is true OR if activity_percent is 0
+        // (tiny cursor nudges can keep idle=false but still show 0% activity)
+        const isIdleSample = sample.idle === true || (sample.activity_percent ?? 100) === 0;
+        if (isIdleSample) {
+          idleMinutesRef.current += 1;
+          setLiveIdleSeconds(prev => prev + 60); // track live idle for display
+          const limit = user?.idle_limit || 10;
+          if (idleMinutesRef.current >= limit && !isPaused) {
+            const mode = user?.keep_idle_mode || 'prompt';
+            
+            // Retroactively mark those samples idle=true in DB so dashboard is accurate
+            markSamplesAsIdle(limit);
 
-          if (mode === 'never') {
+            if (mode === 'always') {
+              idleMinutesRef.current = 0;
+              return;
+            }
+
+            if (mode === 'never') {
+              handlePause();
+              discardIdleTime(limit, false);
+              idleMinutesRef.current = 0;
+              (trackerAPI as any).startIdleMonitoring(limit);
+              return;
+            }
+
+            // Default: 'prompt'
+            setIdlePaused(true);
             handlePause();
-            discardIdleTime(limit, false);
             idleMinutesRef.current = 0;
             (trackerAPI as any).startIdleMonitoring(limit);
-            return;
           }
-
-          // Default: 'prompt'
-          setIdlePaused(true);
-          handlePause();
+        } else {
           idleMinutesRef.current = 0;
-          (trackerAPI as any).startIdleMonitoring(limit);
         }
-      } else {
-        idleMinutesRef.current = 0;
-      }
-    });
+      });
+    };
+
+    setupListener();
 
     console.log('Tracking listener active:', { isPaused, idlePaused });
 
     return () => {
-      if (typeof unlistenPromise?.then === 'function') {
-        unlistenPromise.then((f: any) => { if (typeof f === 'function') f(); });
-      }
+      if (unlisten) unlisten();
     };
   }, [isTracking, isPaused, user?.idle_limit, user?.keep_idle_mode]); // Re-subscribe when tracking state or limits/modes change
 
@@ -884,6 +943,7 @@ export default function App() {
     const productiveStart = Math.max(0, todaySecs - idleSecs);
     setElapsed(productiveStart);
     setLiveIdleSeconds(0); // reset live idle counter for new session
+    idleMinutesRef.current = 0; // reset inactivity counter for new session
     setIsPaused(false);
     setTrackingError(null);
 
@@ -920,7 +980,13 @@ export default function App() {
   }
 
   async function handleStop() {
-    await trackerAPI.stopTracking();
+    console.log('[App] handleStop called. SessionId:', sessionId);
+    try {
+      const res: any = await trackerAPI.stopTracking();
+      console.log('[App] stopTracking response:', res);
+    } catch (err) {
+      console.error('[App] stopTracking FAILED:', err);
+    }
     
     setIsTracking(false);
     setIsPaused(false);
@@ -942,8 +1008,8 @@ export default function App() {
     await trackerAPI.resumeTracking();
   }
 
-  function handleLogout() {
-    handleStop();
+  async function handleLogout() {
+    await handleStop();
     clearSession();
     setUser(null);
     setProjects([]);

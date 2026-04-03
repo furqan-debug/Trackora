@@ -26,7 +26,7 @@ export function DailyTotals() {
     const [data, setData] = useState<DayTotal[]>([]);
     const [weekOffset, setWeekOffset] = useState(0);
     const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
-    const [allMembers, setAllMembers] = useState<{ id: string; full_name: string; timezone?: string }[]>([]);
+    const [allMembers, setAllMembers] = useState<{ id: string; full_name: string; timezone?: string; idle_limit?: number | null }[]>([]);
 
     const weekDates = Array.from({ length: 7 }, (_, i) => {
         const d = new Date();
@@ -48,8 +48,8 @@ export function DailyTotals() {
             end.setHours(23, 59, 59, 999);
 
             // Fetch members
-            const { data: members } = await supabase.from('members').select('id, full_name, timezone');
-            if (members && allMembers.length === 0) {
+            const { data: members } = await supabase.from('members').select('id, full_name, timezone, idle_limit');
+            if (members) {
                 setAllMembers(members);
             }
 
@@ -96,22 +96,61 @@ export function DailyTotals() {
                     dedupedSamples.push(s);
                 });
 
-                const stats: Record<string, number[]> = {};
-                
-                dedupedSamples.forEach((s: any) => {
+                // Group samples by user to apply threshold logic
+                const userSamples = new Map<string, any[]>();
+                dedupedSamples.forEach(s => {
                     const uid = sessionToUserId.get(s.session_id);
-                    if (!uid || !memberMap[uid]) return;
+                    if (!uid) return;
+                    if (!userSamples.has(uid)) userSamples.set(uid, []);
+                    userSamples.get(uid)!.push(s);
+                });
 
-                    // NEW FORMULA: only count sample if it's NOT idle
-                    if (s.idle === true) return;
+                const stats: Record<string, number[]> = {};
 
-                    const dayIdxRaw = getDayIndexInTz(s.recorded_at, memberMap[uid].tz);
-                    // Match to UI columns (MON=0, TUE=1 ... SUN=6)
-                    const dayIdx = (dayIdxRaw + 6) % 7; 
+                userSamples.forEach((samples, uid) => {
+                    const limit = allMembers.find(m => m.id === uid)?.idle_limit ?? 10;
+                    const sorted = samples.sort((a, b) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime());
+                    
+                    let currentBlock: any[] = [];
+                    const productiveMinutes = new Set<string>();
+
+                    for (let i = 0; i < sorted.length; i++) {
+                        const s = sorted[i];
+                        const prev = i > 0 ? sorted[i-1] : null;
+                        const gapMs = prev ? (new Date(s.recorded_at).getTime() - new Date(prev.recorded_at).getTime()) : 0;
+                        const isContiguous = prev && gapMs <= 125000;
+
+                        if (s.idle && isContiguous) {
+                            currentBlock.push(s);
+                        } else if (s.idle && !prev) {
+                            currentBlock = [s];
+                        } else if (s.idle && !isContiguous) {
+                            if (currentBlock.length < limit) {
+                                currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
+                            }
+                            currentBlock = [s];
+                        } else {
+                            productiveMinutes.add(s.recorded_at.substring(0, 16));
+                            if (currentBlock.length < limit) {
+                                currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
+                            }
+                            currentBlock = [];
+                        }
+                    }
+                    if (currentBlock.length < limit) {
+                        currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
+                    }
 
                     if (!stats[uid]) stats[uid] = Array(7).fill(0);
-                    
-                    stats[uid][dayIdx] += (1 / 60); // Add 1 minute as hour increment
+                    productiveMinutes.forEach(minuteStr => {
+                        // Find the sample to get the day index (approximate to first match or just use the string)
+                        const s = sorted.find(samp => samp.recorded_at.startsWith(minuteStr));
+                        if (s) {
+                            const dayIdxRaw = getDayIndexInTz(s.recorded_at, memberMap[uid].tz);
+                            const dayIdx = (dayIdxRaw + 6) % 7; 
+                            stats[uid][dayIdx] += (1 / 60);
+                        }
+                    });
                 });
 
                 const result: DayTotal[] = Object.entries(stats).map(([uid, totals]) => ({

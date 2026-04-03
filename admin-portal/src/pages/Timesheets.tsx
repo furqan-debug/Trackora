@@ -35,7 +35,7 @@ interface MemberInfo {
     id: string;
     full_name: string;
     timezone?: string;
-    keep_idle_mode?: string;
+    idle_limit?: number | null;
 }
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -59,7 +59,7 @@ export function Timesheets() {
     useEffect(() => { fetchTimesheets(); }, [weekOffset, selectedMember]);
 
     async function fetchMembers() {
-        const { data } = await supabase.from('members').select('id, full_name, timezone, keep_idle_mode').order('full_name');
+        const { data } = await supabase.from('members').select('id, full_name, timezone, idle_limit').order('full_name');
         setMembers(data as MemberInfo[] || []);
     }
 
@@ -147,21 +147,57 @@ export function Timesheets() {
                 dedupedSamples.push(s);
             });
 
-            // Count Productive Minutes per Day (Total - Idle)
-            dedupedSamples.forEach(a => {
-                const uid = sessionToUserId.get(a.session_id);
+            // Count Active/Total Minutes per Day (Threshold-Aware)
+            const userSamplesGrouped = new Map<string, any[]>();
+            dedupedSamples.forEach(s => {
+                const uid = sessionToUserId.get(s.session_id);
                 if (!uid) return;
+                if (!userSamplesGrouped.has(uid)) userSamplesGrouped.set(uid, []);
+                userSamplesGrouped.get(uid)!.push(s);
+            });
 
-                // NEW FORMULA: a minute is productive if it's NOT marked as idle
-                // idle=true means idle time — do not count toward productive minutes
-                if (a.idle === true) return;
+            userSamplesGrouped.forEach((samples, uid) => {
+                const limit = members.find(m => m.id === uid)?.idle_limit ?? 10;
+                const sorted = samples.sort((a, b) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime());
+                
+                let currentBlock: any[] = [];
+                const productiveMinutes = new Set<string>();
+
+                for (let i = 0; i < sorted.length; i++) {
+                    const s = sorted[i];
+                    const prev = i > 0 ? sorted[i-1] : null;
+                    const gapMs = prev ? (new Date(s.recorded_at).getTime() - new Date(prev.recorded_at).getTime()) : 0;
+                    const isContiguous = prev && gapMs <= 125000;
+
+                    if (s.idle && isContiguous) {
+                        currentBlock.push(s);
+                    } else if (s.idle && !prev) {
+                        currentBlock = [s];
+                    } else if (s.idle && !isContiguous) {
+                        if (currentBlock.length < limit) {
+                            currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
+                        }
+                        currentBlock = [s];
+                    } else {
+                        productiveMinutes.add(s.recorded_at.substring(0, 16));
+                        if (currentBlock.length < limit) {
+                            currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
+                        }
+                        currentBlock = [];
+                    }
+                }
+                if (currentBlock.length < limit) {
+                    currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
+                }
 
                 const memberTz = memberTzMap[uid];
-                const dateKey = getGroupingDateInTz(a.recorded_at, memberTz || selectedTz);
-                if (dailyMap[dateKey]) {
-                    dailyMap[dateKey].totalMinutes += 1;
-                    dailyMap[dateKey].activeMinutes += 1;
-                }
+                productiveMinutes.forEach(minuteStr => {
+                    const dateKey = getGroupingDateInTz(new Date(minuteStr + ':00Z').toISOString(), memberTz || selectedTz);
+                    if (dailyMap[dateKey]) {
+                        dailyMap[dateKey].totalMinutes += 1;
+                        dailyMap[dateKey].activeMinutes += 1;
+                    }
+                });
             });
 
             // Calculate Activity Score for each day

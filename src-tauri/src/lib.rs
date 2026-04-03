@@ -529,7 +529,24 @@ pub fn run() {
                 if let Some(sid) = session_id {
                     let ended = chrono::Utc::now().to_rfc3339();
                     let body = serde_json::json!({ "ended_at": ended }).to_string();
+                    println!("[lib] 🛑 Shutting down. Closing session: {}", sid);
                     let _ = supabase_patch(&cfg, "sessions", &format!("id=eq.{}", sid), &body, token.as_deref());
+                }
+
+                // Final sync of any cached samples before exit
+                let db_arc = {
+                    let s = state_handle.lock().unwrap();
+                    Arc::clone(&s.db)
+                };
+                let auth_token_arc = {
+                    let s = state_handle.lock().unwrap();
+                    Arc::clone(&s.auth_token)
+                };
+
+                let db_guard = db_arc.lock().unwrap();
+                if let Some(conn) = db_guard.as_ref() {
+                    println!("[lib] 🔄 Final sync of cached samples...");
+                    cache::sync_once(conn, &cfg, &auth_token_arc);
                 }
             }
         })
