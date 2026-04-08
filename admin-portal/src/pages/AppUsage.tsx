@@ -59,28 +59,30 @@ export function AppUsage() {
         const start = new Date(`${selectedDate}T00:00:00`).toISOString();
         const end = new Date(`${selectedDate}T23:59:59`).toISOString();
 
-        let sessionIds: string[] | null = null;
+        const selectedMember = members.find(m => m.id === selectedMemberId);
+        const scopedUserIds = selectedMemberId.toLowerCase() !== 'all'
+            ? Array.from(new Set([selectedMember?.id, selectedMember?.auth_user_id].filter(Boolean) as string[]))
+            : Array.from(new Set(members.flatMap(m => [m.id, m.auth_user_id].filter(Boolean) as string[])));
 
-        if (selectedMemberId.toLowerCase() !== 'all') {
-            const selectedMember = members.find(m => m.id === selectedMemberId);
-            const memberUserIds = Array.from(
-                new Set([selectedMember?.id, selectedMember?.auth_user_id].filter(Boolean) as string[])
-            );
+        if (scopedUserIds.length === 0) {
+            setApps([]);
+            setLoading(false);
+            return;
+        }
 
-            if (memberUserIds.length === 0) {
-                setApps([]);
-                setLoading(false);
-                return;
-            }
+        const { data: userSessions } = await supabase
+            .from('sessions')
+            .select('id')
+            .in('user_id', scopedUserIds)
+            .lt('started_at', end)
+            .or(`ended_at.is.null,ended_at.gt.${start}`);
 
-            const { data: userSessions } = await supabase
-                .from('sessions')
-                .select('id')
-                .in('user_id', memberUserIds)
-                .lt('started_at', end)
-                .or(`ended_at.is.null,ended_at.gt.${start}`);
+        const sessionIds = userSessions?.map(s => s.id) || [];
 
-            sessionIds = userSessions?.map(s => s.id) || [];
+        if (sessionIds.length === 0) {
+            setApps([]);
+            setLoading(false);
+            return;
         }
 
         try {
@@ -93,9 +95,7 @@ export function AppUsage() {
                 .not('app_name', 'is', null)
                 .not('app_name', 'eq', '');
 
-            if (sessionIds && sessionIds.length > 0) {
-                query = query.in('session_id', sessionIds);
-            }
+            query = query.in('session_id', sessionIds);
 
             const { data: samples, error } = await query;
 

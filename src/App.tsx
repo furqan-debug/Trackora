@@ -616,11 +616,39 @@ export default function App() {
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
-    getSupabase().then(async (sb: any) => {
-      const { data: { session } } = await sb.auth.getSession();
-      if (session?.access_token) {
-        trackerAPI.setAuthToken(session.access_token);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const visibilityHandler = () => {
+      if (document.visibilityState === 'visible') {
+        getSupabase().then(async (sb: any) => {
+          const { data: { session } } = await sb.auth.getSession();
+          if (session?.access_token) {
+            trackerAPI.setAuthToken(session.access_token);
+            return;
+          }
+          const refreshed = await sb.auth.refreshSession();
+          const refreshedToken = refreshed?.data?.session?.access_token;
+          if (refreshedToken) {
+            trackerAPI.setAuthToken(refreshedToken);
+          }
+        });
       }
+    };
+
+    getSupabase().then(async (sb: any) => {
+      const pushLatestToken = async () => {
+        const { data: { session } } = await sb.auth.getSession();
+        if (session?.access_token) {
+          trackerAPI.setAuthToken(session.access_token);
+          return;
+        }
+        const refreshed = await sb.auth.refreshSession();
+        const refreshedToken = refreshed?.data?.session?.access_token;
+        if (refreshedToken) {
+          trackerAPI.setAuthToken(refreshedToken);
+        }
+      };
+
+      await pushLatestToken();
 
       const { data: { subscription } } = sb.auth.onAuthStateChange((_event: string, nextSession: any) => {
         const token = nextSession?.access_token;
@@ -629,10 +657,18 @@ export default function App() {
         }
       });
 
+      // Keep Rust token fresh even if auth-state events are missed in long-running desktop sessions.
+      timer = setInterval(() => {
+        pushLatestToken();
+      }, 60_000);
+      document.addEventListener('visibilitychange', visibilityHandler);
+
       cleanup = () => subscription?.unsubscribe();
     });
 
     return () => {
+      if (timer) clearInterval(timer);
+      document.removeEventListener('visibilitychange', visibilityHandler);
       cleanup?.();
     };
   }, []);

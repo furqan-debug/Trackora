@@ -95,6 +95,11 @@ export function Reports() {
                 .from('members')
                 .select('id, auth_user_id, email, full_name, pay_rate, bill_rate, timezone')
                 .eq('status', 'Active')).data || [];
+        const allMemberSessionUserIds = Array.from(
+            new Set(
+                membersForLookup.flatMap((m: any) => [m.id, m.auth_user_id].filter(Boolean) as string[])
+            )
+        );
 
         let filteredSessionUserIds: string[] = [];
 
@@ -146,9 +151,20 @@ export function Reports() {
                 .lt('started_at', end)
                 .or(`ended_at.is.null,ended_at.gt.${start}`);
 
-            if (filteredSessionUserIds.length > 0) {
-                sessionsQuery = sessionsQuery.in('user_id', filteredSessionUserIds);
+            const scopedUserIds = filteredSessionUserIds.length > 0 ? filteredSessionUserIds : allMemberSessionUserIds;
+            if (scopedUserIds.length === 0) {
+                setDailyActivity([]);
+                setAppBreakdown([]);
+                setTotalSessions(0);
+                setScreenshotCount(0);
+                setTotalMins(0);
+                setAvgActivity(0);
+                setTotalCosts(0);
+                setTotalBilled(0);
+                setLoading(false);
+                return;
             }
+            sessionsQuery = sessionsQuery.in('user_id', scopedUserIds);
 
             const { data: sessionData } = await sessionsQuery;
             const filteredSessions = sessionData || [];

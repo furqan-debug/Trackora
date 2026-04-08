@@ -58,55 +58,31 @@ export function UrlTracking() {
 
     useEffect(() => { fetchDomains(); }, [range, selectedMemberId, members]);
 
+    useEffect(() => {
+        if (range !== 'Today') return;
+        if (selectedMemberId !== 'all' && members.length === 0) return;
+        const timer = setInterval(() => {
+            fetchDomains();
+        }, 15000);
+        return () => clearInterval(timer);
+    }, [range, selectedMemberId, members]);
+
 
     async function fetchDomains() {
         setLoading(true);
-
         const selectedMember = members.find(m => m.id === selectedMemberId);
-        const tz = (
-            selectedMemberId.toLowerCase() !== 'all'
-                ? selectedMember?.timezone
-                : Intl.DateTimeFormat().resolvedOptions().timeZone
-        ) || 'UTC';
-
-        // 1. Calculate the UTC range based on the member's timezone.
-        // Uses longOffset for precise parsing (e.g., "GMT+05:00") to avoid shortOffset ambiguity.
-        const getUtcOffsetMinutes = (timezone: string, date: Date): number => {
-            try {
-                const parts = new Intl.DateTimeFormat('en-US', {
-                    timeZone: timezone,
-                    timeZoneName: 'longOffset'
-                }).formatToParts(date);
-                const offsetStr = parts.find(p => p.type === 'timeZoneName')?.value ?? '';
-                const match = offsetStr.match(/GMT([+-])(\d{2}):(\d{2})/);
-                if (match) {
-                    const [, sign, hours, mins] = match;
-                    const total = parseInt(hours) * 60 + parseInt(mins);
-                    return sign === '+' ? total : -total;
-                }
-            } catch { /* */ }
-            return 0;
-        };
 
         const now = new Date();
         let startLocal: Date;
         if (range === 'Today') {
-            const offsetMins = getUtcOffsetMinutes(tz, now);
-            // Get local midnight by shifting now to local time, flooring to midnight, then shifting back
-            const localNow = new Date(now.getTime() + offsetMins * 60000);
-            localNow.setUTCHours(0, 0, 0, 0); // midnight in local time
-            startLocal = new Date(localNow.getTime() - offsetMins * 60000); // back to UTC
+            startLocal = new Date();
+            startLocal.setHours(0, 0, 0, 0);
         } else if (range === 'Last 7 Days') {
             startLocal = new Date(now.getTime() - 7 * 86400000);
         } else {
             startLocal = new Date(now.getTime() - 30 * 86400000);
         }
-
-        const startOffsetMins = getUtcOffsetMinutes(tz, startLocal);
-
-        const start = range === 'Today'
-            ? startLocal.toISOString()
-            : new Date(startLocal.getTime() - startOffsetMins * 60000).toISOString();
+        const start = startLocal.toISOString();
         const end = now.toISOString();
         
         const scopedUserIds = selectedMemberId.toLowerCase() !== 'all'

@@ -65,46 +65,23 @@ export function Activity() {
         fetchData();
     }, [selectedDate, selectedMemberId, members]);
 
+    useEffect(() => {
+        // Keep the screen truly live for today's view.
+        if (selectedDate !== formatLocalDate(new Date())) return;
+        if (selectedMemberId !== 'all' && members.length === 0) return;
+        const timer = setInterval(() => {
+            fetchData();
+        }, 15000);
+        return () => clearInterval(timer);
+    }, [selectedDate, selectedMemberId, members]);
+
     async function fetchData() {
         setLoading(true);
 
         const selectedMember = members.find(m => m.id === selectedMemberId);
-        // For all members, use browser timezone; for specific member, use their timezone.
-        const tz = (
-            selectedMemberId.toLowerCase() !== 'all'
-                ? selectedMember?.timezone
-                : Intl.DateTimeFormat().resolvedOptions().timeZone
-        ) || 'UTC';
-
-        // Calculate the UTC window that corresponds to the selected date in the member's timezone.
-        const getUtcOffsetMinutes = (timezone: string, date: Date): number => {
-            try {
-                const parts = new Intl.DateTimeFormat('en-US', {
-                    timeZone: timezone,
-                    timeZoneName: 'longOffset'
-                }).formatToParts(date);
-                const offsetStr = parts.find(p => p.type === 'timeZoneName')?.value ?? '';
-                const match = offsetStr.match(/GMT([+-])(\d{2}):(\d{2})/);
-                if (match) {
-                    const [, sign, hours, mins] = match;
-                    const total = parseInt(hours) * 60 + parseInt(mins);
-                    return sign === '+' ? total : -total;
-                }
-            } catch { /* */ }
-            return 0;
-        };
-
-        // Use a reference point mid-day to get a stable offset for the selected date
-        const refPoint = new Date(`${selectedDate}T12:00:00Z`);
-        const offsetMinutes = getUtcOffsetMinutes(tz, refPoint);
-
-        // UTC time = local midnight - offset
-        // e.g. PKT is UTC+5 → local midnight = UTC 19:00 previous day
-        const startUtcMs = new Date(`${selectedDate}T00:00:00`).getTime() - offsetMinutes * 60000;
-        const endUtcMs = new Date(`${selectedDate}T23:59:59`).getTime() - offsetMinutes * 60000;
-
-        const start = new Date(startUtcMs).toISOString();
-        const end = new Date(endUtcMs).toISOString();
+        // Local day boundaries in admin/browser timezone.
+        const start = new Date(`${selectedDate}T00:00:00`).toISOString();
+        const end = new Date(`${selectedDate}T23:59:59.999`).toISOString();
 
         const memberUserIds = selectedMemberId.toLowerCase() !== 'all'
             ? Array.from(new Set([selectedMember?.id, selectedMember?.auth_user_id].filter(Boolean) as string[]))
