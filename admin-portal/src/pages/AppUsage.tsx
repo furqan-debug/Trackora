@@ -13,6 +13,7 @@ interface AppEntry {
 
 interface MemberInfo {
     id: string;
+    auth_user_id?: string | null;
     full_name: string;
 }
 
@@ -43,31 +44,41 @@ export function AppUsage() {
 
     useEffect(() => {
         // Fetch active members list
-        supabase.from('members').select('id, full_name').eq('status', 'Active').then(({ data }) => {
+        supabase.from('members').select('id, auth_user_id, full_name').eq('status', 'Active').then(({ data }) => {
             if (data) setMembers(data);
         });
     }, []);
 
     useEffect(() => {
         fetchData();
-    }, [selectedDate, selectedMemberId]);
+    }, [selectedDate, selectedMemberId, members]);
 
     async function fetchData() {
         setLoading(true);
 
-        const start = `${selectedDate}T00:00:00`;
-        const end = `${selectedDate}T23:59:59`;
+        const start = new Date(`${selectedDate}T00:00:00`).toISOString();
+        const end = new Date(`${selectedDate}T23:59:59`).toISOString();
 
         let sessionIds: string[] | null = null;
 
         if (selectedMemberId.toLowerCase() !== 'all') {
-            const sessionFetchStart = new Date(new Date(start).getTime() - 24 * 60 * 60 * 1000).toISOString();
+            const selectedMember = members.find(m => m.id === selectedMemberId);
+            const memberUserIds = Array.from(
+                new Set([selectedMember?.id, selectedMember?.auth_user_id].filter(Boolean) as string[])
+            );
+
+            if (memberUserIds.length === 0) {
+                setApps([]);
+                setLoading(false);
+                return;
+            }
+
             const { data: userSessions } = await supabase
                 .from('sessions')
                 .select('id')
-                .eq('user_id', selectedMemberId)
-                .gte('started_at', sessionFetchStart)
-                .lte('started_at', end);
+                .in('user_id', memberUserIds)
+                .lt('started_at', end)
+                .or(`ended_at.is.null,ended_at.gt.${start}`);
 
             sessionIds = userSessions?.map(s => s.id) || [];
         }

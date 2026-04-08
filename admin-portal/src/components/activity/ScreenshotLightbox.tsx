@@ -127,7 +127,7 @@ export function ScreenshotLightbox({ enlarged, setEnlarged }: ScreenshotLightbox
                             </span>
                         </div>
                     </div>
-                    
+
                     <p className="text-white/20 text-[9px] font-black uppercase tracking-[0.8em] font-mono">
                         Trackora AI Inspection Engine
                     </p>

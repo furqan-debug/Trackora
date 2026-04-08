@@ -614,6 +614,29 @@ export default function App() {
     });
   }, []); // Run once on mount
 
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    getSupabase().then(async (sb: any) => {
+      const { data: { session } } = await sb.auth.getSession();
+      if (session?.access_token) {
+        trackerAPI.setAuthToken(session.access_token);
+      }
+
+      const { data: { subscription } } = sb.auth.onAuthStateChange((_event: string, nextSession: any) => {
+        const token = nextSession?.access_token;
+        if (token) {
+          trackerAPI.setAuthToken(token);
+        }
+      });
+
+      cleanup = () => subscription?.unsubscribe();
+    });
+
+    return () => {
+      cleanup?.();
+    };
+  }, []);
+
   const discardIdleTime = async (minutes: number, shouldResume: boolean = true) => {
     if (!user || !sessionId) return;
     const sb = await getSupabase();
@@ -903,6 +926,7 @@ export default function App() {
       };
       const { data: projectsData } = await sb.from('projects').select('*');
       const token = authData.session.access_token;
+      trackerAPI.setAuthToken(token);
 
       if (rememberMe) saveSession(token, userObj);
       setUser(userObj);

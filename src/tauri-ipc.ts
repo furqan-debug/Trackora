@@ -29,6 +29,13 @@ export const trackerAPI = {
     return invoke('start_tracking', { projectId, userId, token: token ?? '' });
   },
 
+  /** Update Rust-side token for background sync calls */
+  setAuthToken: async (token: string) => {
+    const invoke = getInvoke();
+    if (!invoke) return;
+    return invoke('set_auth_token', { token });
+  },
+
   /** Stop the current tracking session */
   stopTracking: async () => {
     const invoke = getInvoke();

@@ -18,6 +18,7 @@ interface DomainEntry {
 
 interface MemberInfo {
     id: string;
+    auth_user_id?: string | null;
     full_name: string;
     timezone?: string;
 }
@@ -50,19 +51,23 @@ export function UrlTracking() {
     const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
 
     useEffect(() => {
-        supabase.from('members').select('id, full_name, timezone').eq('status', 'Active').then(({ data }) => {
+        supabase.from('members').select('id, auth_user_id, full_name, timezone').eq('status', 'Active').then(({ data }) => {
             if (data) setMembers(data);
         });
     }, []);
 
-    useEffect(() => { fetchDomains(); }, [range, selectedMemberId]);
+    useEffect(() => { fetchDomains(); }, [range, selectedMemberId, members]);
 
 
     async function fetchDomains() {
         setLoading(true);
 
         const selectedMember = members.find(m => m.id === selectedMemberId);
-        const tz = selectedMember?.timezone || 'UTC';
+        const tz = (
+            selectedMemberId.toLowerCase() !== 'all'
+                ? selectedMember?.timezone
+                : Intl.DateTimeFormat().resolvedOptions().timeZone
+        ) || 'UTC';
 
         // 1. Calculate the UTC range based on the member's timezone.
         // Uses longOffset for precise parsing (e.g., "GMT+05:00") to avoid shortOffset ambiguity.
@@ -86,11 +91,11 @@ export function UrlTracking() {
         const now = new Date();
         let startLocal: Date;
         if (range === 'Today') {
-            startLocal = new Date(now);
-            startLocal.setUTCHours(0, 0, 0, 0);
-            // Align to member's local midnight
-            const offsetMs = getUtcOffsetMinutes(tz, now) * 60000;
-            startLocal = new Date(startLocal.getTime() - offsetMs);
+            const offsetMins = getUtcOffsetMinutes(tz, now);
+            // Get local midnight by shifting now to local time, flooring to midnight, then shifting back
+            const localNow = new Date(now.getTime() + offsetMins * 60000);
+            localNow.setUTCHours(0, 0, 0, 0); // midnight in local time
+            startLocal = new Date(localNow.getTime() - offsetMins * 60000); // back to UTC
         } else if (range === 'Last 7 Days') {
             startLocal = new Date(now.getTime() - 7 * 86400000);
         } else {
@@ -98,24 +103,37 @@ export function UrlTracking() {
         }
 
         const startOffsetMins = getUtcOffsetMinutes(tz, startLocal);
-        const endOffsetMins = getUtcOffsetMinutes(tz, now);
 
         const start = range === 'Today'
             ? startLocal.toISOString()
             : new Date(startLocal.getTime() - startOffsetMins * 60000).toISOString();
-        const end = new Date(now.getTime() - endOffsetMins * 60000).toISOString();
+        const end = now.toISOString();
+        
+        const scopedUserIds = selectedMemberId.toLowerCase() !== 'all'
+            ? Array.from(new Set([selectedMember?.id, selectedMember?.auth_user_id].filter(Boolean) as string[]))
+            : Array.from(new Set(members.flatMap(m => [m.id, m.auth_user_id].filter(Boolean) as string[])));
 
-        let sessionIds: string[] | undefined = undefined;
-        if (selectedMemberId.toLowerCase() !== 'all') {
-            const sessionFetchStart = new Date(new Date(start).getTime() - 24 * 60 * 60 * 1000).toISOString();
-            const { data: userSessions } = await supabase
-                .from('sessions')
-                .select('id')
-                .eq('user_id', selectedMemberId)
-                .gte('started_at', sessionFetchStart)
-                .lte('started_at', end);
+        if (scopedUserIds.length === 0) {
+            setDomains([]);
+            setHourlyData(Array.from({ length: 24 }, (_, h) => ({ hour: `${h}:00`, count: 0 })));
+            setLoading(false);
+            return;
+        }
 
-            sessionIds = userSessions?.map(s => s.id) || [];
+        const { data: userSessions } = await supabase
+            .from('sessions')
+            .select('id')
+            .in('user_id', scopedUserIds)
+            .lt('started_at', end)
+            .or(`ended_at.is.null,ended_at.gt.${start}`);
+
+        const sessionIds = userSessions?.map(s => s.id) || [];
+
+        if (sessionIds.length === 0) {
+            setDomains([]);
+            setHourlyData(Array.from({ length: 24 }, (_, h) => ({ hour: `${h}:00`, count: 0 })));
+            setLoading(false);
+            return;
         }
 
         // Use paginated fetcher to avoid 1000-row limit
@@ -124,11 +142,11 @@ export function UrlTracking() {
             start,
             end,
             'domain, recorded_at',
-            sessionIds ? { sessionIds } : undefined
+            { sessionIds }
         );
 
         // Filter to rows with actual domain data
-        const data = (rawSamples || []).filter(r => r.domain && r.domain !== '');
+        const data = (rawSamples || []).filter(r => (r.domain || '').trim() !== '');
 
         const domainMap: Record<string, number> = {};
         const hourMap: Record<number, number> = {};

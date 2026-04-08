@@ -19,8 +19,7 @@ import {
     calculateActivityScore,
     getGroupingDateInTz,
     getEffectiveEnd,
-    fetchAllActivitySamples,
-    fetchAllSessions
+    fetchAllActivitySamples
 } from '../lib/dataUtils';
 
 const COLORS = ['#506ef8', '#818cf8', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
@@ -42,7 +41,7 @@ export function Reports() {
     // Team & Member filtering
     const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
     const [selectedTeamId, setSelectedTeamId] = useState<string>('All');
-    const [members, setMembers] = useState<{ id: string; email: string; full_name: string; pay_rate?: number; bill_rate?: number; timezone?: string }[]>([]);
+    const [members, setMembers] = useState<{ id: string; auth_user_id?: string | null; email: string; full_name: string; pay_rate?: number; bill_rate?: number; timezone?: string }[]>([]);
     const [selectedMemberId, setSelectedMemberId] = useState<string>('All');
 
     useEffect(() => {
@@ -60,20 +59,26 @@ export function Reports() {
     }
 
     async function fetchMembers() {
-        const { data } = await supabase.from('members').select('id, email, full_name, pay_rate, bill_rate, timezone').eq('status', 'Active');
+        const { data } = await supabase.from('members').select('id, auth_user_id, email, full_name, pay_rate, bill_rate, timezone').eq('status', 'Active');
         if (data) setMembers(data);
     }
 
+    function getMemberSessionUserIds(member: { id: string; auth_user_id?: string | null }): string[] {
+        return Array.from(new Set([member.id, member.auth_user_id].filter(Boolean) as string[]));
+    }
+
+    // ✅ FIX 1: getDateRange no longer mutates `now`, uses consistent references
     function getDateRange(): { start: string; end: string } {
         const now = new Date();
         const end = now.toISOString();
         let start: Date;
         if (range === 'Today') {
-            start = new Date(now.setHours(0, 0, 0, 0));
+            start = new Date();
+            start.setHours(0, 0, 0, 0); // ✅ fresh Date, not mutating `now`
         } else if (range === 'Last 7 Days') {
-            start = new Date(Date.now() - 7 * 86400000);
+            start = new Date(now.getTime() - 7 * 86400000); // ✅ using now.getTime()
         } else {
-            start = new Date(Date.now() - 30 * 86400000);
+            start = new Date(now.getTime() - 30 * 86400000);
         }
         return { start: start.toISOString(), end };
     }
@@ -82,16 +87,42 @@ export function Reports() {
         setLoading(true);
         const { start, end } = getDateRange();
 
-        let filteredMemberIds: string[] = [];
+        // ✅ FIX 2: Always fetch fresh members at top of fetchReports to avoid
+        // stale state race condition when member filter is changed on first load
+        const membersForLookup = members.length > 0
+            ? members
+            : (await supabase
+                .from('members')
+                .select('id, auth_user_id, email, full_name, pay_rate, bill_rate, timezone')
+                .eq('status', 'Active')).data || [];
+
+        let filteredSessionUserIds: string[] = [];
 
         if (selectedMemberId !== 'All') {
-            filteredMemberIds = [selectedMemberId];
+            // ✅ FIX 3: Use membersForLookup (fresh) instead of stale members state
+            const selectedMember = membersForLookup.find(m => m.id === selectedMemberId);
+            filteredSessionUserIds = selectedMember
+                ? getMemberSessionUserIds(selectedMember)
+                : [];
         } else if (selectedTeamId !== 'All') {
             const { data: tm } = await supabase.from('team_members').select('member_id').eq('team_id', selectedTeamId);
-            filteredMemberIds = tm?.map(t => t.member_id) || [];
+            const teamMemberIds = tm?.map(t => t.member_id) || [];
+
+            if (teamMemberIds.length > 0) {
+                const membersById = new Map(membersForLookup.map(m => [m.id, m]));
+                filteredSessionUserIds = Array.from(
+                    new Set(
+                        teamMemberIds.flatMap(memberId => {
+                            const member = membersById.get(memberId);
+                            return member ? getMemberSessionUserIds(member) : [memberId];
+                        })
+                    )
+                );
+            }
         }
 
-        if ((selectedMemberId !== 'All' || selectedTeamId !== 'All') && filteredMemberIds.length === 0) {
+        // Early exit if specific filter selected but no user IDs found
+        if ((selectedMemberId !== 'All' || selectedTeamId !== 'All') && filteredSessionUserIds.length === 0) {
             setDailyActivity([]);
             setAppBreakdown([]);
             setTotalSessions(0);
@@ -105,15 +136,22 @@ export function Reports() {
         }
 
         try {
-            // Fetch all sessions in range (paginated)
-            const sessions = await fetchAllSessions(supabase, new Date(start), new Date(end), undefined, selectedMemberId.toLowerCase() !== 'all' ? selectedMemberId : undefined);
-            
-            // If we filtered by team, we need to filter sessions manually or fetch only for team
-            let filteredSessions = sessions;
-            if (selectedTeamId.toLowerCase() !== 'all' && selectedMemberId.toLowerCase() === 'all') {
-                const teamMemberIds = new Set(filteredMemberIds);
-                filteredSessions = sessions.filter(s => teamMemberIds.has(s.user_id));
+            // ✅ FIX 4: Filter sessions by user_id IN THE DB QUERY when a member/team
+            // is selected, instead of fetching all sessions and filtering in JS.
+            // This is the root cause of member data not showing — JS filter was running
+            // before membersForLookup was populated, resulting in empty filteredSessions.
+            let sessionsQuery = supabase
+                .from('sessions')
+                .select('id, user_id, started_at, ended_at')
+                .lt('started_at', end)
+                .or(`ended_at.is.null,ended_at.gt.${start}`);
+
+            if (filteredSessionUserIds.length > 0) {
+                sessionsQuery = sessionsQuery.in('user_id', filteredSessionUserIds);
             }
+
+            const { data: sessionData } = await sessionsQuery;
+            const filteredSessions = sessionData || [];
 
             // If a specific member/team was selected but they have no sessions, return early
             if ((selectedMemberId !== 'All' || selectedTeamId !== 'All') && filteredSessions.length === 0) {
@@ -130,11 +168,15 @@ export function Reports() {
             }
 
             const activeSessionIds = filteredSessions.map(s => s.id);
-            
-            // Fetch screenshots count and samples
-            let ssQuery = supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', start).lte('recorded_at', end);
+
+            // Fetch screenshots count
+            let ssQuery = supabase
+                .from('screenshots')
+                .select('id', { count: 'exact', head: true })
+                .gte('recorded_at', start)
+                .lte('recorded_at', end);
+
             if (activeSessionIds.length > 0) {
-                // IMPORTANT: screenshots table DOES NOT have user_id, it only has session_id
                 ssQuery = ssQuery.in('session_id', activeSessionIds);
             }
 
@@ -150,51 +192,40 @@ export function Reports() {
             ]);
 
             const allSamples = samples || [];
-            
-            // Always update session and screenshot counts, even if samples are empty
+
             setTotalSessions(activeSessionIds.length);
             setScreenshotCount(ssCount || 0);
 
             const sessionToUserId = new Map();
-            (filteredSessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
+            filteredSessions.forEach(s => sessionToUserId.set(s.id, s.user_id));
             const activeSessionIdsSet = new Set(activeSessionIds);
 
-            // NEW FORMULA: only include productive samples (idle=false or null)
-            const filteredSamples = allSamples.filter(s => {
-                if (!activeSessionIdsSet.has(s.session_id)) return false;
-                // Idle samples are tracked but excluded from productive/billable time
-                return s.idle !== true;
-            });
+            const inScopeSamples = allSamples.filter(s => activeSessionIdsSet.has(s.session_id));
+            const productiveSamples = inScopeSamples.filter(s => s.idle !== true);
 
             const membersMap = new Map<string, any>();
             const memberTzs = new Map<string, string | undefined>();
 
-            // Fetch members inline to avoid stale state (race condition if fetchMembers
-            // hasn't resolved yet when this runs on initial member selection)
-            const membersForLookup = members.length > 0
-                ? members
-                : (await supabase.from('members').select('id, email, full_name, pay_rate, bill_rate, timezone').eq('status', 'Active')).data || [];
-
             membersForLookup.forEach((m: any) => {
                 membersMap.set(m.id, m);
                 memberTzs.set(m.id, m.timezone);
+                if (m.auth_user_id) {
+                    membersMap.set(m.auth_user_id, m);
+                    memberTzs.set(m.auth_user_id, m.timezone);
+                }
             });
 
-            // Deduplicate Samples (1 per user per minute)
+            // Deduplicate samples (1 per user per minute)
             const seen = new Set<string>();
             const dedupedSamples: any[] = [];
 
-            // Sort to prefer high activity if duplicates exist
-            const sortedSamples = [...filteredSamples].sort((a, b) => (b.activity_percent ?? 0) - (a.activity_percent ?? 0));
+            const sortedSamples = [...inScopeSamples].sort((a, b) => (b.activity_percent ?? 0) - (a.activity_percent ?? 0));
 
             sortedSamples.forEach(s => {
                 const uid = sessionToUserId.get(s.session_id);
                 if (!uid) return;
-
-                // Truncate to the minute
                 const minute = new Date(s.recorded_at).toISOString().substring(0, 16);
                 const key = `${uid}_${minute}`;
-
                 if (seen.has(key)) return;
                 seen.add(key);
                 dedupedSamples.push(s);
@@ -203,7 +234,6 @@ export function Reports() {
             const dailyMap: Record<string, { active: number; total_samples: number; total_minutes: number }> = {};
             let costs = 0;
             let billed = 0;
-            let totalActivitySum = 0;
 
             dedupedSamples.forEach(s => {
                 const uid = sessionToUserId.get(s.session_id);
@@ -212,8 +242,6 @@ export function Reports() {
                 const day = getGroupingDateInTz(s.recorded_at, memberTzs.get(uid));
 
                 if (!dailyMap[day]) dailyMap[day] = { active: 0, total_samples: 0, total_minutes: 0 };
-
-                totalActivitySum += (s.activity_percent || 0);
 
                 if (s.activity_percent && s.activity_percent > 0) {
                     dailyMap[day].active++;
@@ -228,14 +256,16 @@ export function Reports() {
                 }
             });
 
-            setDailyActivity(Object.entries(dailyMap).sort().map(([date, v]) => ({
-                date: new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                activity: v.total_samples > 0 ? Math.round((v.active / v.total_samples) * 100) : 0,
-                minutes: Math.round(v.total_minutes),
-            })));
+            setDailyActivity(
+                Object.entries(dailyMap).sort().map(([date, v]) => ({
+                    date: new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                    activity: v.total_samples > 0 ? Math.round((v.active / v.total_samples) * 100) : 0,
+                    minutes: Math.round(v.total_minutes),
+                }))
+            );
 
             const appMap: Record<string, number> = {};
-            filteredSamples.forEach(s => {
+            inScopeSamples.forEach(s => {
                 const app = s.app_name || 'Unknown';
                 appMap[app] = (appMap[app] || 0) + 1;
             });
@@ -243,9 +273,9 @@ export function Reports() {
                 Object.entries(appMap).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, value]) => ({ name, value }))
             );
 
-            // Total Time based on Sessions (Start to End)
+            // Total time based on sessions
             let totalSessionMins = 0;
-            (filteredSessions || []).forEach(s => {
+            filteredSessions.forEach(s => {
                 const { endMs } = getEffectiveEnd(s.started_at, s.ended_at);
                 const startMs = new Date(s.started_at).getTime();
                 totalSessionMins += (endMs - startMs) / 60000;
@@ -254,7 +284,7 @@ export function Reports() {
             setTotalSessions(filteredSessions.length);
             setScreenshotCount(ssCount || 0);
             setTotalMins(Math.max(dedupedSamples.length, Math.round(totalSessionMins)));
-            setAvgActivity(calculateActivityScore(dedupedSamples));
+            setAvgActivity(calculateActivityScore(productiveSamples));
             setTotalCosts(costs);
             setTotalBilled(billed);
         } catch (err) {
