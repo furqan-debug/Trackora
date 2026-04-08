@@ -3,7 +3,7 @@ import path from 'path';
 import https from 'https';
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const VERSION     = '1.1.1';
+const VERSION     = '1.1.2';
 const TAG         = `v${VERSION}`;
 const OWNER       = 'furqan-debug';
 const REPO        = 'Trackora';

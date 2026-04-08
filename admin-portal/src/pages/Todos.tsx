@@ -5,7 +5,7 @@ import {
     User, Calendar, 
     LayoutGrid, List, MoreHorizontal, 
     Trash2, Tag, 
-    CheckSquare, ClipboardList, Timer
+    CheckSquare, ClipboardList, Timer, X, ChevronDown
 } from 'lucide-react';
 import { 
     PageLayout, Card, Button, StatusBadge, 
@@ -26,6 +26,10 @@ interface Todo {
     created_at: string;
     projects?: { name: string; color: string };
     members?: { full_name: string };
+    todo_assignees?: Array<{
+        member_id: string;
+        members?: { id: string; full_name: string };
+    }>;
 }
 
 interface Project {
@@ -52,6 +56,8 @@ export function Todos() {
 
     // Modal state
     const [showModal, setShowModal] = useState(false);
+    const [showAssigneePicker, setShowAssigneePicker] = useState(false);
+    const [assigneeSearch, setAssigneeSearch] = useState('');
     const [editTodo, setEditTodo] = useState<Todo | null>(null);
     const [deletingTodo, setDeletingTodo] = useState<Todo | null>(null);
     const [saving, setSaving] = useState(false);
@@ -59,7 +65,7 @@ export function Todos() {
         title: '',
         description: '',
         project_id: '',
-        assignee_id: '',
+        assignee_ids: [] as string[],
         due_date: '',
         status: 'Todo' as 'Todo' | 'In Progress' | 'Done'
     });
@@ -71,14 +77,32 @@ export function Todos() {
     async function fetchInitialData() {
         setLoading(true);
 
-        const { data: todoData } = await supabase
+        const { data: todoData, error: todoError } = await supabase
             .from('todos')
             .select(`
                 *,
                 projects (name, color),
-                members (full_name)
+                members (full_name),
+                todo_assignees (
+                    member_id,
+                    members (id, full_name)
+                )
             `)
             .order('created_at', { ascending: false });
+
+        // Fallback for environments where todo_assignees migration has not been applied yet.
+        let safeTodoData = todoData;
+        if (todoError) {
+            const { data: legacyTodoData } = await supabase
+                .from('todos')
+                .select(`
+                    *,
+                    projects (name, color),
+                    members (full_name)
+                `)
+                .order('created_at', { ascending: false });
+            safeTodoData = legacyTodoData;
+        }
 
         const { data: projectData } = await supabase
             .from('projects')
@@ -90,11 +114,32 @@ export function Todos() {
             .select('id, full_name')
             .order('full_name');
 
-        if (todoData) setTodos(todoData);
+        if (safeTodoData) setTodos(safeTodoData as Todo[]);
         if (projectData) setProjects(projectData);
         if (memberData) setMembers(memberData);
 
         setLoading(false);
+    }
+
+    function getTodoAssigneeIds(todo: Todo): string[] {
+        if (todo.todo_assignees && todo.todo_assignees.length > 0) {
+            return [...new Set(todo.todo_assignees.map(a => a.member_id).filter(Boolean))];
+        }
+        return todo.assignee_id ? [todo.assignee_id] : [];
+    }
+
+    async function syncTodoAssignees(todoId: string, assigneeIds: string[]) {
+        const uniqueIds = [...new Set(assigneeIds.filter(Boolean))];
+        try {
+            await supabase.from('todo_assignees').delete().eq('todo_id', todoId);
+            if (uniqueIds.length > 0) {
+                const rows = uniqueIds.map(member_id => ({ todo_id: todoId, member_id }));
+                const { error } = await supabase.from('todo_assignees').insert(rows);
+                if (error) throw error;
+            }
+        } catch (error) {
+            console.warn('Failed to sync multi-assignees; keeping legacy assignee only.', error);
+        }
     }
 
     async function handleSubmit(e: React.FormEvent) {
@@ -102,49 +147,59 @@ export function Todos() {
         if (!formData.project_id) return;
 
         setSaving(true);
-        
-        const payload = {
-            title: formData.title,
-            description: formData.description,
-            project_id: formData.project_id,
-            assignee_id: formData.assignee_id || null,
-            due_date: formData.due_date || null,
-            organization_id: profile?.organization_id
-        };
+        try {
+            const payload = {
+                title: formData.title,
+                description: formData.description,
+                project_id: formData.project_id,
+                // Keep legacy single assignee in sync for compatibility with existing clients.
+                assignee_id: formData.assignee_ids[0] || null,
+                due_date: formData.due_date || null,
+                organization_id: profile?.organization_id
+            };
 
-        if (editTodo) {
-            const { data, error } = await supabase
-                .from('todos')
-                .update({ ...payload, status: formData.status })
-                .eq('id', editTodo.id)
-                .select(`
-                    *,
-                    projects (name, color),
-                    members (full_name)
-                `)
-                .single();
+            if (editTodo) {
+                const { data, error } = await supabase
+                    .from('todos')
+                    .update({ ...payload, status: formData.status })
+                    .eq('id', editTodo.id)
+                    .select(`
+                        *,
+                        projects (name, color),
+                        members (full_name)
+                    `)
+                    .single();
 
-            if (!error && data) {
-                setTodos(todos.map(t => t.id === data.id ? data : t));
-                handleCloseModal();
+                if (error) throw error;
+                if (data) {
+                    await syncTodoAssignees(data.id, formData.assignee_ids);
+                    await fetchInitialData();
+                    handleCloseModal();
+                }
+            } else {
+                const { data, error } = await supabase
+                    .from('todos')
+                    .insert({ ...payload, status: 'Todo' })
+                    .select(`
+                        *,
+                        projects (name, color),
+                        members (full_name)
+                    `)
+                    .single();
+
+                if (error) throw error;
+                if (data) {
+                    await syncTodoAssignees(data.id, formData.assignee_ids);
+                    await fetchInitialData();
+                    handleCloseModal();
+                }
             }
-        } else {
-            const { data, error } = await supabase
-                .from('todos')
-                .insert({ ...payload, status: 'Todo' })
-                .select(`
-                    *,
-                    projects (name, color),
-                    members (full_name)
-                `)
-                .single();
-
-            if (!error && data) {
-                setTodos([data, ...todos]);
-                handleCloseModal();
-            }
+        } catch (error) {
+            console.error('Failed to save task', error);
+            alert('Task could not be saved. Please check required fields and try again.');
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
     }
 
     async function toggleStatus(todo: Todo) {
@@ -176,11 +231,13 @@ export function Todos() {
 
     function handleOpenCreate() {
         setEditTodo(null);
+        setShowAssigneePicker(false);
+        setAssigneeSearch('');
         setFormData({
             title: '',
             description: '',
             project_id: '',
-            assignee_id: '',
+            assignee_ids: [],
             due_date: '',
             status: 'Todo'
         });
@@ -189,11 +246,13 @@ export function Todos() {
 
     function handleOpenEdit(todo: Todo) {
         setEditTodo(todo);
+        setShowAssigneePicker(false);
+        setAssigneeSearch('');
         setFormData({
             title: todo.title,
             description: todo.description || '',
             project_id: todo.project_id,
-            assignee_id: todo.assignee_id || '',
+            assignee_ids: getTodoAssigneeIds(todo),
             due_date: todo.due_date || '',
             status: todo.status
         });
@@ -203,7 +262,22 @@ export function Todos() {
     function handleCloseModal() {
         setShowModal(false);
         setEditTodo(null);
+        setShowAssigneePicker(false);
+        setAssigneeSearch('');
     }
+
+    function toggleAssignee(memberId: string) {
+        setFormData(prev => ({
+            ...prev,
+            assignee_ids: prev.assignee_ids.includes(memberId)
+                ? prev.assignee_ids.filter(id => id !== memberId)
+                : [...prev.assignee_ids, memberId]
+        }));
+    }
+
+    const filteredMembers = members.filter(m =>
+        m.full_name.toLowerCase().includes(assigneeSearch.toLowerCase())
+    );
 
     const filteredTodos = todos.filter(t => {
         const matchesSearch = t.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -268,7 +342,7 @@ export function Todos() {
                 />
                 <KpiCard 
                     label="Total Assigned" 
-                    value={todos.filter(t => t.assignee_id).length.toString()} 
+                    value={todos.filter(t => getTodoAssigneeIds(t).length > 0).length.toString()} 
                     icon={<ClipboardList className="w-5 h-5 text-text-muted" />} 
                     sub="Current workload"
                 />
@@ -401,18 +475,94 @@ export function Todos() {
                         </div>
                         <div className="space-y-1.5">
                             <label className="text-xs font-semibold text-text-primary px-1">
-                                Assignee
+                                Assignees
                             </label>
-                            <select
-                                value={formData.assignee_id}
-                                onChange={e => setFormData({ ...formData, assignee_id: e.target.value })}
-                                className="w-full px-4 py-2.5 bg-surface-solid border border-border rounded-xl text-sm text-text-primary outline-none focus:border-primary transition-all"
-                            >
-                                <option value="">Unassigned</option>
-                                {members.map(m => (
-                                    <option key={m.id} value={m.id}>{m.full_name}</option>
-                                ))}
-                            </select>
+                            <div className="w-full">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAssigneePicker(v => !v)}
+                                    className="w-full px-3 py-2.5 bg-surface-solid border border-border rounded-xl text-left text-sm flex items-center justify-between hover:border-primary/50 transition-all"
+                                >
+                                    <div className="flex flex-wrap gap-1.5 min-h-5">
+                                        {formData.assignee_ids.length === 0 ? (
+                                            <span className="text-text-muted">Select assignees</span>
+                                        ) : (
+                                            <>
+                                                {formData.assignee_ids.slice(0, 2).map(id => {
+                                                    const member = members.find(m => m.id === id);
+                                                    if (!member) return null;
+                                                    return (
+                                                        <span
+                                                            key={id}
+                                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-primary/10 text-primary border border-primary/20"
+                                                        >
+                                                            {member.full_name}
+                                                            <span
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    toggleAssignee(id);
+                                                                }}
+                                                                className="cursor-pointer text-primary/70 hover:text-primary"
+                                                            >
+                                                                <X className="w-3 h-3" />
+                                                            </span>
+                                                        </span>
+                                                    );
+                                                })}
+                                                {formData.assignee_ids.length > 2 && (
+                                                    <span className="text-xs text-text-muted self-center">
+                                                        +{formData.assignee_ids.length - 2} more
+                                                    </span>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                    <ChevronDown className={clsx("w-4 h-4 text-text-muted transition-transform", showAssigneePicker && "rotate-180")} />
+                                </button>
+
+                                {showAssigneePicker && (
+                                    <div className="mt-2 p-2 bg-surface-solid border border-border rounded-xl shadow-sm">
+                                        <div className="relative mb-2">
+                                            <Search className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+                                            <input
+                                                value={assigneeSearch}
+                                                onChange={(e) => setAssigneeSearch(e.target.value)}
+                                                placeholder="Search members..."
+                                                className="w-full pl-9 pr-3 py-2 text-sm bg-surface border border-border rounded-lg outline-none focus:border-primary"
+                                            />
+                                        </div>
+
+                                        <div className="max-h-44 overflow-y-auto divide-y divide-border/40 border border-border/70 rounded-lg">
+                                            {filteredMembers.map(m => {
+                                                const selected = formData.assignee_ids.includes(m.id);
+                                                return (
+                                                    <label
+                                                        key={m.id}
+                                                        className={clsx(
+                                                            "flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-all",
+                                                            selected ? "bg-primary/5 text-text-primary" : "hover:bg-surface-subtle text-text-secondary"
+                                                        )}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selected}
+                                                            onChange={() => toggleAssignee(m.id)}
+                                                            className="rounded border-border"
+                                                        />
+                                                        <span>{m.full_name}</span>
+                                                    </label>
+                                                );
+                                            })}
+                                            {filteredMembers.length === 0 && (
+                                                <div className="px-3 py-3 text-xs text-text-muted">No members found.</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <p className="text-[11px] text-text-muted px-1">
+                                Select one or more members. Leave empty for unassigned.
+                            </p>
                         </div>
                     </div>
 
@@ -509,6 +659,11 @@ export function Todos() {
 }
 
 function TodoListItem({ todo, onToggle, onEdit, onDelete, isViewer }: { todo: Todo; onToggle: () => void; onEdit: () => void; onDelete: () => void; isViewer: boolean }) {
+    const assigneeNames = todo.todo_assignees?.map(a => a.members?.full_name).filter(Boolean) as string[] | undefined;
+    const assigneeLabel = assigneeNames && assigneeNames.length > 0
+        ? assigneeNames.join(', ')
+        : todo.members?.full_name;
+
     return (
         <div className="py-4 px-4 hover:bg-surface-subtle transition-all group flex items-start gap-4 border-b border-border/40 last:border-0 rounded-xl">
             <button
@@ -549,10 +704,10 @@ function TodoListItem({ todo, onToggle, onEdit, onDelete, isViewer }: { todo: To
                     </p>
                 )}
                 <div className="flex items-center gap-4">
-                    {todo.members && (
+                    {assigneeLabel && (
                         <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
                             <User className="w-3 h-3 opacity-60" />
-                            {todo.members.full_name}
+                            {assigneeLabel}
                         </div>
                     )}
                     {todo.due_date && (
@@ -597,6 +752,10 @@ function TodoListItem({ todo, onToggle, onEdit, onDelete, isViewer }: { todo: To
 }
 
 function TodoGridItem({ todo, onToggle, onEdit, onDelete, isViewer }: { todo: Todo; onToggle: () => void; onEdit: () => void; onDelete: () => void; isViewer: boolean }) {
+    const assigneeNames = todo.todo_assignees?.map(a => a.members?.full_name).filter(Boolean) as string[] | undefined;
+    const firstAssignee = assigneeNames?.[0] || todo.members?.full_name;
+    const extraCount = assigneeNames && assigneeNames.length > 1 ? assigneeNames.length - 1 : 0;
+
     return (
         <div className="bg-surface-solid border border-border rounded-xl p-6 hover:shadow-md transition-all group flex flex-col h-full">
             <div className="flex justify-between items-start mb-4">
@@ -652,10 +811,11 @@ function TodoGridItem({ todo, onToggle, onEdit, onDelete, isViewer }: { todo: To
             <div className="flex items-center justify-between pt-4 border-t border-border/40 mt-auto">
                 <div className="flex items-center gap-2">
                     <div className="w-6 h-6 rounded-full bg-surface-subtle border border-border flex items-center justify-center text-[10px] font-bold text-text-primary">
-                        {todo.members?.full_name.charAt(0) || '?'}
+                        {firstAssignee?.charAt(0) || '?'}
                     </div>
                     <span className="text-[11px] font-medium text-text-muted">
-                        {todo.members?.full_name.split(' ')[0] || 'Unassigned'}
+                        {firstAssignee?.split(' ')[0] || 'Unassigned'}
+                        {extraCount > 0 ? ` +${extraCount}` : ''}
                     </span>
                 </div>
                 {todo.due_date && (
