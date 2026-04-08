@@ -106,11 +106,8 @@ export function UrlTracking() {
         const end = new Date(now.getTime() - endOffsetMins * 60000).toISOString();
 
         let sessionIds: string[] | undefined = undefined;
-        if (selectedMemberId !== 'all') {
-            // Only fetch sessions that could possibly overlap with this time range
-            // We look back 24 hours from the start to catch long-running sessions
+        if (selectedMemberId.toLowerCase() !== 'all') {
             const sessionFetchStart = new Date(new Date(start).getTime() - 24 * 60 * 60 * 1000).toISOString();
-
             const { data: userSessions } = await supabase
                 .from('sessions')
                 .select('id')
@@ -119,13 +116,6 @@ export function UrlTracking() {
                 .lte('started_at', end);
 
             sessionIds = userSessions?.map(s => s.id) || [];
-
-            if (sessionIds.length === 0) {
-                setDomains([]);
-                setHourlyData(Array.from({ length: 24 }, (_, h) => ({ hour: `${h}:00`, count: 0 })));
-                setLoading(false);
-                return;
-            }
         }
 
         // Use paginated fetcher to avoid 1000-row limit

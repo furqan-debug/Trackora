@@ -12,7 +12,8 @@ import {
 import clsx from 'clsx';
 import { 
     getDayIndexInTz,
-    fetchAllActivitySamples
+    fetchAllActivitySamples,
+    getEffectiveEnd
 } from '../lib/dataUtils';
 
 interface DayTotal {
@@ -58,7 +59,7 @@ export function DailyTotals() {
                 .lt('started_at', end.toISOString())
                 .or(`ended_at.is.null,ended_at.gt.${start.toISOString()}`);
             
-            if (selectedMemberId !== 'all') {
+            if (selectedMemberId.toLowerCase() !== 'all') {
                 sessQuery = sessQuery.eq('user_id', selectedMemberId);
             }
             
@@ -146,16 +147,28 @@ export function DailyTotals() {
                         currentBlock.forEach(b => productiveMinutes.add(b.recorded_at.substring(0, 16)));
                     }
 
-                    if (!stats[uid]) stats[uid] = Array(7).fill(0);
-                    productiveMinutes.forEach(minuteStr => {
-                        // Find the sample to get the day index (approximate to first match or just use the string)
-                        const s = sorted.find(samp => samp.recorded_at.startsWith(minuteStr));
-                        if (s) {
-                            const dayIdxRaw = getDayIndexInTz(s.recorded_at, memberMap[uid].tz);
+                    if (productiveMinutes.size > 0) {
+                        productiveMinutes.forEach(minuteStr => {
+                            const s = sorted.find(samp => samp.recorded_at.startsWith(minuteStr));
+                            if (s) {
+                                const dayIdxRaw = getDayIndexInTz(s.recorded_at, memberMap[uid].tz);
+                                const dayIdx = (dayIdxRaw + 6) % 7; 
+                                stats[uid][dayIdx] += (1 / 60);
+                            }
+                        });
+                    } else {
+                        // FALLBACK: Use session durations if no samples exist for this user
+                        const userSess = sessions.filter((s: any) => s.user_id === uid);
+                        userSess.forEach((s: any) => {
+                            const { endMs } = getEffectiveEnd(s.started_at, s.ended_at);
+                            const startMs = new Date(s.started_at).getTime();
+                            const durationHrs = (endMs - startMs) / (1000 * 60 * 60);
+                            
+                            const dayIdxRaw = getDayIndexInTz(s.started_at, memberMap[uid].tz);
                             const dayIdx = (dayIdxRaw + 6) % 7; 
-                            stats[uid][dayIdx] += (1 / 60);
-                        }
-                    });
+                            stats[uid][dayIdx] += durationHrs;
+                        });
+                    }
                 });
 
                 const result: DayTotal[] = Object.entries(stats).map(([uid, totals]) => ({

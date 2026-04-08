@@ -18,6 +18,7 @@ import {
     formatDuration,
     calculateActivityScore,
     getGroupingDateInTz,
+    getEffectiveEnd,
     fetchAllActivitySamples,
     fetchAllSessions
 } from '../lib/dataUtils';
@@ -105,11 +106,11 @@ export function Reports() {
 
         try {
             // Fetch all sessions in range (paginated)
-            const sessions = await fetchAllSessions(supabase, new Date(start), new Date(end), undefined, selectedMemberId !== 'All' ? selectedMemberId : undefined);
+            const sessions = await fetchAllSessions(supabase, new Date(start), new Date(end), undefined, selectedMemberId.toLowerCase() !== 'all' ? selectedMemberId : undefined);
             
             // If we filtered by team, we need to filter sessions manually or fetch only for team
             let filteredSessions = sessions;
-            if (selectedTeamId !== 'All' && selectedMemberId === 'All') {
+            if (selectedTeamId.toLowerCase() !== 'all' && selectedMemberId.toLowerCase() === 'all') {
                 const teamMemberIds = new Set(filteredMemberIds);
                 filteredSessions = sessions.filter(s => teamMemberIds.has(s.user_id));
             }
@@ -132,8 +133,9 @@ export function Reports() {
             
             // Fetch screenshots count and samples
             let ssQuery = supabase.from('screenshots').select('id', { count: 'exact', head: true }).gte('recorded_at', start).lte('recorded_at', end);
-            if (filteredMemberIds.length > 0) {
-                ssQuery = ssQuery.in('user_id', filteredMemberIds);
+            if (activeSessionIds.length > 0) {
+                // IMPORTANT: screenshots table DOES NOT have user_id, it only has session_id
+                ssQuery = ssQuery.in('session_id', activeSessionIds);
             }
 
             const [samples, { count: ssCount }] = await Promise.all([
@@ -148,6 +150,11 @@ export function Reports() {
             ]);
 
             const allSamples = samples || [];
+            
+            // Always update session and screenshot counts, even if samples are empty
+            setTotalSessions(activeSessionIds.length);
+            setScreenshotCount(ssCount || 0);
+
             const sessionToUserId = new Map();
             (filteredSessions || []).forEach(s => sessionToUserId.set(s.id, s.user_id));
             const activeSessionIdsSet = new Set(activeSessionIds);
@@ -236,13 +243,20 @@ export function Reports() {
                 Object.entries(appMap).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, value]) => ({ name, value }))
             );
 
+            // Total Time based on Sessions (Start to End)
+            let totalSessionMins = 0;
+            (filteredSessions || []).forEach(s => {
+                const { endMs } = getEffectiveEnd(s.started_at, s.ended_at);
+                const startMs = new Date(s.started_at).getTime();
+                totalSessionMins += (endMs - startMs) / 60000;
+            });
+
             setTotalSessions(filteredSessions.length);
             setScreenshotCount(ssCount || 0);
-            setTotalMins(dedupedSamples.length);
-            setAvgActivity(dedupedSamples.length > 0 ? Math.round(totalActivitySum / dedupedSamples.length) : 0);
+            setTotalMins(Math.max(dedupedSamples.length, Math.round(totalSessionMins)));
+            setAvgActivity(calculateActivityScore(dedupedSamples));
             setTotalCosts(costs);
             setTotalBilled(billed);
-            setAvgActivity(calculateActivityScore(dedupedSamples));
         } catch (err) {
             console.error("fetchReports unhandled error:", err);
         } finally {

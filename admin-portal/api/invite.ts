@@ -29,7 +29,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    
+
     // Create service role client for admin actions
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
     // Create a regular client to verify the user token
@@ -51,8 +51,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .maybeSingle();
 
         if (profileError || !profile || (profile.role !== 'Admin' && profile.role !== 'Manager')) {
-            return res.status(403).json({ 
-                error: `Forbidden: Only Admins and Managers can invite users. Your detected role is: ${profile?.role || 'Guest'}` 
+            return res.status(403).json({
+                error: `Forbidden: Only Admins and Managers can invite users. Your detected role is: ${profile?.role || 'Guest'}`
             });
         }
 

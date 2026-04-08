@@ -60,11 +60,19 @@ export function Locations() {
     const [locations, setLocations] = useState<LocationEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [currentIpInfo, setCurrentIpInfo] = useState<{ city: string; country: string; ip: string } | null>(null);
+    const [members, setMembers] = useState<{id: string, full_name: string}[]>([]);
+    const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
+
+    useEffect(() => {
+        fetchCurrentIp();
+        supabase.from('members').select('id, full_name').eq('status', 'Active').then(({ data }) => {
+            if (data) setMembers(data);
+        });
+    }, []);
 
     useEffect(() => {
         fetchLocations();
-        fetchCurrentIp();
-    }, []);
+    }, [selectedMemberId]);
 
     async function fetchCurrentIp() {
         try {
@@ -77,13 +85,17 @@ export function Locations() {
     async function fetchLocations() {
         setLoading(true);
 
-        const { data: sessions } = await supabase
+        let query = supabase
             .from('sessions')
             .select('id, user_id, started_at')
-            .order('started_at', { ascending: false })
-            .limit(100);
+            .order('started_at', { ascending: false });
 
-        const { data: members } = await supabase.from('members').select('id, full_name');
+        if (selectedMemberId.toLowerCase() !== 'all') {
+            query = query.eq('user_id', selectedMemberId);
+        }
+
+        const { data: sessions } = await query.limit(100);
+
         const memberMap: Record<string, string> = {};
         (members || []).forEach(m => memberMap[m.id] = m.full_name);
 
@@ -138,12 +150,28 @@ export function Locations() {
                     <h1 className="text-2xl font-bold text-slate-800 tracking-tight mb-2">Locations Map</h1>
                     <p className="text-slate-500">Track where your team is working from in real-time.</p>
                 </div>
-                {currentIpInfo && (
-                    <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-700">
-                        <MapPin className="w-4 h-4" />
-                        <span>You are in <strong>{currentIpInfo.city}, {currentIpInfo.country}</strong></span>
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3 bg-white p-1.5 rounded-xl border border-slate-200">
+                        <Users className="w-4 h-4 text-slate-400 ml-2" />
+                        <select
+                            value={selectedMemberId}
+                            onChange={(e) => setSelectedMemberId(e.target.value)}
+                            className="bg-transparent text-sm font-semibold text-slate-700 outline-none pr-4 min-w-[140px]"
+                        >
+                            <option value="all">Every Member</option>
+                            {members.map(m => (
+                                <option key={m.id} value={m.id}>{m.full_name}</option>
+                            ))}
+                        </select>
                     </div>
-                )}
+
+                    {currentIpInfo && (
+                        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-700">
+                            <MapPin className="w-4 h-4" />
+                            <span>You are in <strong>{currentIpInfo.city}, {currentIpInfo.country}</strong></span>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* KPIs */}

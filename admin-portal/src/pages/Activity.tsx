@@ -64,8 +64,8 @@ export function Activity() {
 
         const selectedMember = members.find(m => m.id === selectedMemberId);
         // For 'all' members, use admin's local timezone (no offset needed)
-        // For a specific member, use their stored timezone
-        const tz = (selectedMemberId !== 'all' ? selectedMember?.timezone : null) || 'UTC';
+        // For a specific member, use their stored timezone. If member not found yet, default to UTC
+        const tz = (selectedMemberId.toLowerCase() !== 'all' ? selectedMember?.timezone : null) || 'UTC';
 
         // Calculate the UTC window that corresponds to the selected date in the member's timezone.
         const getUtcOffsetMinutes = (timezone: string, date: Date): number => {
@@ -97,8 +97,8 @@ export function Activity() {
         const start = new Date(startUtcMs).toISOString();
         const end = new Date(endUtcMs).toISOString();
 
-        let sessionIds: string[] | null = null;
-        if (selectedMemberId !== 'all') {
+        let sessionIds: string[] = [];
+        if (selectedMemberId.toLowerCase() !== 'all') {
             // Only fetch sessions that could possibly overlap with this day
             // We look back 24 hours from the start of the day to catch sessions that spanned across midnight
             const sessionFetchStart = new Date(new Date(start).getTime() - 24 * 60 * 60 * 1000).toISOString();
@@ -111,14 +111,12 @@ export function Activity() {
                 .lte('started_at', end);
 
             sessionIds = userSessions?.map(s => s.id) || [];
-
-            if (sessionIds.length === 0) {
-                setSamples([]);
-                setScreenshots([]);
-                setLoading(false);
-                return;
-            }
         }
+
+        const isAllMembers = selectedMemberId.toLowerCase() === 'all';
+        
+        // If we fixed a member but found no sessions, we still want to try fetching by window
+        // though it will likely be empty. We only filter by sessionIds if we have them.
 
         let actQuery = supabase.from('activity_samples').select('*').gte('recorded_at', start).lte('recorded_at', end).order('recorded_at', { ascending: true });
         let ssQuery = supabase.from('screenshots').select('*').gte('recorded_at', start).lte('recorded_at', end).order('recorded_at', { ascending: false }).limit(200);

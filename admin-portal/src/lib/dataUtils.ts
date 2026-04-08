@@ -412,7 +412,7 @@ export async function fetchAllSessions(
         if (organizationId) {
             query = query.eq('organization_id', organizationId);
         }
-        if (userId && userId !== 'all') {
+        if (userId && userId.toLowerCase() !== 'all') {
             query = query.eq('user_id', userId);
         }
 
@@ -465,9 +465,8 @@ export async function fetchAllActivitySamples(
             .order('recorded_at', { ascending: true })
             .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-        if (filters?.organizationId) {
-            query = query.eq('organization_id', filters.organizationId);
-        }
+        // Note: activity_samples does NOT have organization_id, it relies on session_id links.
+        // We handle organization filtering via sessionIds or by omitting the check if not needed.
 
         // If we have specific session IDs, filter by them
         if (filters?.sessionIds && filters.sessionIds.length > 0) {
