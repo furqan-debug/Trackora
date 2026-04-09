@@ -9,6 +9,8 @@ export interface CardProps {
     /** If true, card has no padding (for tables/charts that need full bleed) */
     noPadding?: boolean;
     actions?: ReactNode;
+    /** Alias for actions, used in Dashboard */
+    headerAction?: ReactNode;
 }
 
 export function Card({
@@ -18,7 +20,9 @@ export function Card({
     className,
     noPadding = false,
     actions,
+    headerAction,
 }: CardProps) {
+    const finalActions = headerAction || actions;
     return (
         <div
             className={clsx(
@@ -27,7 +31,7 @@ export function Card({
                 className
             )}
         >
-            {(title || actions) && (
+            {(title || finalActions) && (
                 <div className={clsx(
                     "flex items-center justify-between border-b border-slate-100",
                     noPadding
@@ -46,8 +50,8 @@ export function Card({
                             </p>
                         )}
                     </div>
-                    {actions ? (
-                        <div className="ml-4 flex items-center gap-3">{actions}</div>
+                    {finalActions ? (
+                        <div className="ml-4 flex items-center gap-3">{finalActions}</div>
                     ) : (
                         <div className="flex-1 h-px bg-slate-100 ml-4" aria-hidden />
                     )}

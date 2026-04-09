@@ -49,6 +49,7 @@ export function Activity() {
     const [members, setMembers] = useState<MemberInfo[]>([]);
     const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
     const [sessionMinutes, setSessionMinutes] = useState(0);
+    const [isInitialLoad, setIsInitialLoad] = useState(true);
     const dateInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -62,7 +63,7 @@ export function Activity() {
         // If a specific member is selected, we need members list to get their timezone.
         // If members haven't loaded yet, skip — the effect will re-run once members load.
         if (selectedMemberId !== 'all' && members.length === 0) return;
-        fetchData();
+        fetchData(false); // Initial load or explicit filter change should show loader
     }, [selectedDate, selectedMemberId, members]);
 
     useEffect(() => {
@@ -70,85 +71,90 @@ export function Activity() {
         if (selectedDate !== formatLocalDate(new Date())) return;
         if (selectedMemberId !== 'all' && members.length === 0) return;
         const timer = setInterval(() => {
-            fetchData();
+            fetchData(true); // Silent background update
         }, 15000);
         return () => clearInterval(timer);
     }, [selectedDate, selectedMemberId, members]);
 
-    async function fetchData() {
-        setLoading(true);
+    async function fetchData(isSilent = false) {
+        if (!isSilent) setLoading(true);
 
-        const selectedMember = members.find(m => m.id === selectedMemberId);
-        // Local day boundaries in admin/browser timezone.
-        const start = new Date(`${selectedDate}T00:00:00`).toISOString();
-        const end = new Date(`${selectedDate}T23:59:59.999`).toISOString();
+        try {
+            const selectedMember = members.find(m => m.id === selectedMemberId);
+            const start = new Date(`${selectedDate}T00:00:00`).toISOString();
+            const end = new Date(`${selectedDate}T23:59:59.999`).toISOString();
 
-        const memberUserIds = selectedMemberId.toLowerCase() !== 'all'
-            ? Array.from(new Set([selectedMember?.id, selectedMember?.auth_user_id].filter(Boolean) as string[]))
-            : [];
+            const memberUserIds = selectedMemberId.toLowerCase() !== 'all'
+                ? Array.from(new Set([selectedMember?.id, selectedMember?.auth_user_id].filter(Boolean) as string[]))
+                : [];
 
-        if (selectedMemberId.toLowerCase() !== 'all' && memberUserIds.length === 0) {
-            setSamples([]);
-            setScreenshots([]);
-            setSessionMinutes(0);
-            setLoading(false);
-            return;
+            if (selectedMemberId.toLowerCase() !== 'all' && memberUserIds.length === 0) {
+                setSamples([]);
+                setScreenshots([]);
+                setSessionMinutes(0);
+                setLoading(false);
+                return;
+            }
+
+            let sessionsQuery = supabase
+                .from('sessions')
+                .select('id, user_id, started_at, ended_at')
+                .lt('started_at', end)
+                .or(`ended_at.is.null,ended_at.gt.${start}`);
+
+            if (memberUserIds.length > 0) {
+                sessionsQuery = sessionsQuery.in('user_id', memberUserIds);
+            }
+
+            const { data: sessionRows } = await sessionsQuery;
+            const sessions = sessionRows || [];
+            const sessionIds = sessions.map(s => s.id);
+
+            if (sessionIds.length === 0) {
+                setSamples([]);
+                setScreenshots([]);
+                setSessionMinutes(0);
+                setLoading(false);
+                return;
+            }
+
+            let actQuery = supabase
+                .from('activity_samples')
+                .select('*')
+                .in('session_id', sessionIds)
+                .gte('recorded_at', start)
+                .lte('recorded_at', end)
+                .order('recorded_at', { ascending: true });
+
+            let ssQuery = supabase
+                .from('screenshots')
+                .select('*')
+                .in('session_id', sessionIds)
+                .gte('recorded_at', start)
+                .lte('recorded_at', end)
+                .order('recorded_at', { ascending: false })
+                .limit(200);
+
+            const [{ data: actData }, { data: ssData }] = await Promise.all([actQuery, ssQuery]);
+
+            const startMs = new Date(start).getTime();
+            const endMs = new Date(end).getTime();
+            const mins = sessions.reduce((acc, s) => {
+                const sStart = new Date(s.started_at).getTime();
+                const sEnd = s.ended_at ? new Date(s.ended_at).getTime() : Date.now();
+                const overlap = Math.max(0, Math.min(sEnd, endMs) - Math.max(sStart, startMs));
+                return acc + overlap / 60000;
+            }, 0);
+
+            setSamples(actData || []);
+            setScreenshots(ssData || []);
+            setSessionMinutes(mins);
+        } catch (error) {
+            console.error('Error fetching activity data:', error);
+        } finally {
+            if (!isSilent) setLoading(false);
+            if (isInitialLoad) setIsInitialLoad(false);
         }
-
-        let sessionsQuery = supabase
-            .from('sessions')
-            .select('id, user_id, started_at, ended_at')
-            .lt('started_at', end)
-            .or(`ended_at.is.null,ended_at.gt.${start}`);
-
-        if (memberUserIds.length > 0) {
-            sessionsQuery = sessionsQuery.in('user_id', memberUserIds);
-        }
-
-        const { data: sessionRows } = await sessionsQuery;
-        const sessions = sessionRows || [];
-        const sessionIds = sessions.map(s => s.id);
-
-        if (sessionIds.length === 0) {
-            setSamples([]);
-            setScreenshots([]);
-            setSessionMinutes(0);
-            setLoading(false);
-            return;
-        }
-
-        let actQuery = supabase
-            .from('activity_samples')
-            .select('*')
-            .in('session_id', sessionIds)
-            .gte('recorded_at', start)
-            .lte('recorded_at', end)
-            .order('recorded_at', { ascending: true });
-
-        let ssQuery = supabase
-            .from('screenshots')
-            .select('*')
-            .in('session_id', sessionIds)
-            .gte('recorded_at', start)
-            .lte('recorded_at', end)
-            .order('recorded_at', { ascending: false })
-            .limit(200);
-
-        const [{ data: actData }, { data: ssData }] = await Promise.all([actQuery, ssQuery]);
-
-        const startMs = new Date(start).getTime();
-        const endMs = new Date(end).getTime();
-        const mins = sessions.reduce((acc, s) => {
-            const sStart = new Date(s.started_at).getTime();
-            const sEnd = s.ended_at ? new Date(s.ended_at).getTime() : Date.now();
-            const overlap = Math.max(0, Math.min(sEnd, endMs) - Math.max(sStart, startMs));
-            return acc + overlap / 60000;
-        }, 0);
-
-        setSamples(actData || []);
-        setScreenshots(ssData || []);
-        setSessionMinutes(mins);
-        setLoading(false);
     }
 
     // Deduplicate samples by minute to avoid double-counting in KPIs if sessions overlap
