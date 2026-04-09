@@ -363,43 +363,38 @@ export function Reports() {
                         icon={<Clock className="w-5 h-5" strokeWidth={2.5} />}
                         label="Total Time"
                         value={formatDuration(totalMins)}
-                        trend="+12%"
-                        trendVariant="positive"
+                        trend={12}
                     />
                     <KpiCard
                         icon={<ActivityIcon className="w-5 h-5" strokeWidth={2.5} />}
                         label="Activity Rating"
                         value={`${avgActivity}%`}
-                        trend="+4%"
-                        trendVariant="positive"
+                        trend={4}
                     />
                     <KpiCard
                         icon={<DollarSign className="w-5 h-5" strokeWidth={2.5} />}
                         label="Total Billed"
                         value={`$${totalBilled.toLocaleString()}`}
-                        trend="+15%"
-                        trendVariant="positive"
+                        trend={15}
                     />
                     <KpiCard
                         icon={<Monitor className="w-5 h-5" strokeWidth={2.5} />}
                         label="Total Sessions"
                         value={totalSessions.toString()}
-                        trend="+2"
-                        trendVariant="positive"
+                        trend={2}
                     />
                     <KpiCard
                         icon={<Camera className="w-5 h-5" strokeWidth={2.5} />}
                         label="Screenshots"
                         value={screenshotCount.toString()}
-                        trend="+45"
-                        trendVariant="positive"
+                        trend={45}
                     />
                     <KpiCard
                         icon={<DollarSign className="w-5 h-5" strokeWidth={2.5} />}
                         label="Total Costs"
                         value={`$${totalCosts.toLocaleString()}`}
-                        trend="+8%"
-                        trendVariant="negative"
+                        trend={8}
+                        variant="negative"
                     />
                 </div>
 

@@ -9,6 +9,8 @@ export interface KpiCardProps {
     sub?: string;
     /** Optional trend percentage (e.g. 12 or -5) */
     trend?: number;
+    /** Optional variant to override trend-based coloring */
+    variant?: 'positive' | 'negative' | 'neutral';
     /** Loading state */
     loading?: boolean;
 }
@@ -19,12 +21,19 @@ export function KpiCard({
     value,
     sub,
     trend,
+    variant,
     loading = false,
 }: KpiCardProps) {
     const isPositive = trend !== undefined && trend >= 0;
-    const trendClass = isPositive
+    
+    // Determine status from variant OR trend sign
+    const effectiveVariant = variant || (trend === undefined ? 'neutral' : isPositive ? 'positive' : 'negative');
+    
+    const trendClass = effectiveVariant === 'positive'
         ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/10'
-        : trend != undefined ? 'bg-rose-500/10 text-rose-600 border-rose-500/10' : 'bg-black/5 text-text-muted border-black/5';
+        : effectiveVariant === 'negative' 
+            ? 'bg-rose-500/10 text-rose-600 border-rose-500/10' 
+            : 'bg-black/5 text-text-muted border-black/5';
 
     return (
         <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-6 flex flex-col relative overflow-hidden group transition-all duration-300 hover:shadow-md">

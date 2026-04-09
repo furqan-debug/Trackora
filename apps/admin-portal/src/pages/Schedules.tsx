@@ -134,9 +134,7 @@ export function Schedules() {
                     label="Total Activity" 
                     value={totalActiveHours.toLocaleString()} 
                     icon={<Activity className="w-5 h-5 text-indigo-500" strokeWidth={2.5} />} 
-                    trend="+12%"
-                    trendVariant="positive"
-                    sub="Aggregate active samples"
+                    trend={12}
                 />
                 <KpiCard 
                     label="Peak Day" 
