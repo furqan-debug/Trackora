@@ -333,8 +333,8 @@ pub fn start_sample_loop(
 }
 
 // ─── Screenshot loop ───────────────────────────────────────────────────────────
-const SCREENSHOT_WINDOW_MS: u64 = 2 * 60 * 1000; // 2 minutes
-const SCREENSHOTS_PER_WINDOW: usize = 2;
+const SCREENSHOT_WINDOW_MS: u64 = 10 * 60 * 1000; // 10 minutes
+const SCREENSHOTS_PER_WINDOW: usize = 3;
 
 pub fn start_screenshot_loop(
     _app: AppHandle,
@@ -357,7 +357,6 @@ pub fn start_screenshot_loop(
             let filename = format!("{}/{}/{}.png", org_slug, user_id, timestamp_num);
             
             let storage_url = format!("{}/storage/v1/object/screenshots/{}", cfg.url, filename);
-            let public_url = format!("{}/storage/v1/object/public/screenshots/{}", cfg.url, filename);
             println!("[tracker] 📸 CAPTURING INITIAL SCREENSHOT: Path={}", filename);
 
             use base64::Engine;
@@ -387,58 +386,77 @@ pub fn start_screenshot_loop(
             if !*running.lock().unwrap() { break; }
             let window_start = std::time::Instant::now();
 
-            if !*running.lock().unwrap() { break; }
+            // Generate random capture times within the window
+            let mut capture_times: Vec<u64> = (0..SCREENSHOTS_PER_WINDOW)
+                .map(|_| rand_ms(SCREENSHOT_WINDOW_MS))
+                .collect();
+            capture_times.sort();
 
-            // Randomly capture every 0-120s
-            let next_secs = rand_ms(120_000);
-            thread::sleep(Duration::from_millis(next_secs));
-            
-            if !*running.lock().unwrap() { break; }
+            let mut last_sleep_end = 0;
 
-            if let Some(base64_data) = capture_screenshot() {
-                let captured_at = chrono::Utc::now();
-                let recorded_at = captured_at.to_rfc3339();
+            for &time_ms in &capture_times {
+                if !*running.lock().unwrap() { break; }
                 
-                let org_slug = organization_id.clone().unwrap_or_else(|| "unknown".to_string());
-                let timestamp_num = captured_at.timestamp_millis();
-                let filename = format!("{}/{}/{}.png", org_slug, user_id, timestamp_num);
-                
-                let storage_url = format!("{}/storage/v1/object/screenshots/{}", cfg.url, filename);
-                let public_url = format!("{}/storage/v1/object/public/screenshots/{}", cfg.url, filename);
-                println!("[tracker] 📸 CAPTURING RANDOM SCREENSHOT: Path={}", filename);
+                let to_sleep = time_ms.saturating_sub(last_sleep_end);
+                if to_sleep > 0 {
+                    thread::sleep(Duration::from_millis(to_sleep));
+                }
+                last_sleep_end = time_ms;
 
-                {
-                    use base64::Engine;
-                    if let Ok(png_bytes) = base64::engine::general_purpose::STANDARD.decode(&base64_data) {
-                        let s_token = auth_token.lock().unwrap().clone();
+                if !*running.lock().unwrap() { break; }
 
-                        let mut req = ureq::post(&storage_url)
-                            .set("apikey", &cfg.anon_key)
-                            .set("Content-Type", "image/png");
-                        
-                        if let Some(token) = &s_token {
-                            req = req.set("Authorization", &format!("Bearer {}", token));
-                        }
+                if let Some(base64_data) = capture_screenshot() {
+                    let captured_at = chrono::Utc::now();
+                    let recorded_at = captured_at.to_rfc3339();
+                    
+                    let org_slug = organization_id.clone().unwrap_or_else(|| "unknown".to_string());
+                    let timestamp_num = captured_at.timestamp_millis();
+                    let filename = format!("{}/{}/{}.png", org_slug, user_id, timestamp_num);
+                    
+                    let storage_url = format!("{}/storage/v1/object/screenshots/{}", cfg.url, filename);
+                    println!("[tracker] 📸 CAPTURING RANDOM SCREENSHOT ({} of {}): Path={}", 
+                        capture_times.iter().position(|&t| t == time_ms).unwrap_or(0) + 1,
+                        SCREENSHOTS_PER_WINDOW,
+                        filename
+                    );
 
-                        let upload_res = req.send_bytes(png_bytes.as_slice());
+                    {
+                        use base64::Engine;
+                        if let Ok(png_bytes) = base64::engine::general_purpose::STANDARD.decode(&base64_data) {
+                            let s_token = auth_token.lock().unwrap().clone();
 
-                        if upload_res.is_ok() {
-                            let body = serde_json::json!({
-                                "session_id": session_id,
-                                "recorded_at": recorded_at,
-                                "file_url": filename, // Store relative path for SecureImage to use
-                            }).to_string();
+                            let mut req = ureq::post(&storage_url)
+                                .set("apikey", &cfg.anon_key)
+                                .set("Content-Type", "image/png");
                             
-                            let _ = crate::supabase_post(&cfg, "screenshots", &body, s_token.as_deref(), None);
+                            if let Some(token) = &s_token {
+                                req = req.set("Authorization", &format!("Bearer {}", token));
+                            }
+
+                            let upload_res = req.send_bytes(png_bytes.as_slice());
+
+                            if upload_res.is_ok() {
+                                let body = serde_json::json!({
+                                    "session_id": session_id,
+                                    "recorded_at": recorded_at,
+                                    "file_url": filename,
+                                }).to_string();
+                                
+                                let _ = crate::supabase_post(&cfg, "screenshots", &body, s_token.as_deref(), None);
+                            }
                         }
                     }
                 }
             }
 
+            if !*running.lock().unwrap() { break; }
+
             // Wait out the remainder of the window
             let used = window_start.elapsed().as_millis() as u64;
             let remaining = SCREENSHOT_WINDOW_MS.saturating_sub(used);
-            thread::sleep(Duration::from_millis(remaining));
+            if remaining > 0 {
+                thread::sleep(Duration::from_millis(remaining));
+            }
         }
     });
 }

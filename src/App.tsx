@@ -342,16 +342,6 @@ export default function App() {
     try {
       const sb = await getSupabase();
       
-      // Update location in DB if we have it
-      try {
-        const r = await fetch('https://ipapi.co/json/');
-        const d = await r.json();
-        if (d.city && d.country_name) {
-          const locString = `${d.city}, ${d.country_name}`;
-          await sb.from('members').update({ location: locString }).eq('id', userId);
-        }
-      } catch {}
-
       const now = new Date();
       // Start of current week (local Monday)
       const day = now.getDay();
@@ -659,8 +649,10 @@ export default function App() {
 
       // Keep Rust token fresh even if auth-state events are missed in long-running desktop sessions.
       timer = setInterval(() => {
-        pushLatestToken();
-      }, 60_000);
+        if (document.visibilityState === 'visible') {
+          pushLatestToken();
+        }
+      }, 5 * 60_000); // Every 5 minutes instead of 1, only when visible
       document.addEventListener('visibilitychange', visibilityHandler);
 
       cleanup = () => subscription?.unsubscribe();
@@ -807,14 +799,36 @@ export default function App() {
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
-    // Only auto-refresh on projects screen — never interrupt an active tracker session
+    // Auto-refresh on projects screen — but only when visible and every 5m instead of 1m
     if (user && screen === 'projects') {
       interval = setInterval(() => {
-        fetchDashboardStats(user.id, projects);
-      }, 60000); // refresh every minute
+        if (document.visibilityState === 'visible') {
+          fetchDashboardStats(user.id, projects);
+        }
+      }, 5 * 60_000); 
     }
     return () => { if (interval) clearInterval(interval); };
-  }, [user?.id, screen]);
+  }, [user?.id, screen, projects]);
+
+  // Standalone effect to sync location once per session
+  useEffect(() => {
+    if (!user?.id) return;
+    const syncLocation = async () => {
+      try {
+        const sb = await getSupabase();
+        const r = await fetch('https://ipapi.co/json/');
+        const d = await r.json();
+        if (d.city && d.country_name) {
+          const locString = `${d.city}, ${d.country_name}`;
+          await sb.from('members').update({ location: locString }).eq('id', user.id);
+          console.log('[App] Location synced:', locString);
+        }
+      } catch (e) {
+        console.error('[App] Location sync failed:', e);
+      }
+    };
+    syncLocation();
+  }, [user?.id]);
 
   async function fetchAndSubscribeTodos(userId: string) {
     const sb = await getSupabase();
