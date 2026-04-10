@@ -84,7 +84,11 @@ pub fn supabase_post(
 ) -> Result<String, String> {
     let url = format!("{}/rest/v1/{}", cfg.url, table);
 
-    let mut req = ureq::post(&url)
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(10))
+        .build();
+
+    let mut req = agent.post(&url)
         .set("apikey", &cfg.anon_key)
         .set("Content-Type", "application/json");
 
@@ -116,7 +120,11 @@ pub fn supabase_patch(
 ) -> Result<String, String> {
     let url = format!("{}/rest/v1/{}?{}", cfg.url, table, filter);
 
-    let mut req = ureq::patch(&url)
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(10))
+        .build();
+
+    let mut req = agent.patch(&url)
         .set("apikey", &cfg.anon_key)
         .set("Content-Type", "application/json");
 
@@ -143,7 +151,11 @@ pub fn supabase_get(
 ) -> Result<String, String> {
     let url = format!("{}/rest/v1/{}?{}", cfg.url, table, filter);
 
-    let mut req = ureq::get(&url)
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(10))
+        .build();
+
+    let mut req = agent.get(&url)
         .set("apikey", &cfg.anon_key);
 
     if let Some(token) = auth_token {
@@ -298,12 +310,7 @@ fn stop_tracking(state: tauri::State<'_, Mutex<AppState>>) -> TrackingResult {
     *running.lock().unwrap() = false;
 
     // Final sync from cache to Supabase
-    {
-        let db_lock = db_arc.lock().unwrap();
-        if let Some(conn) = db_lock.as_ref() {
-            cache::sync_once(conn, &cfg, &auth_arc);
-        }
-    }
+    cache::sync_from_arc(&db_arc, &cfg, &auth_arc);
 
     if let Some(sid) = session_id {
         let token = auth_arc.lock().unwrap().clone();
@@ -553,11 +560,8 @@ pub fn run() {
                     Arc::clone(&s.auth_token)
                 };
 
-                let db_guard = db_arc.lock().unwrap();
-                if let Some(conn) = db_guard.as_ref() {
-                    println!("[lib] 🔄 Final sync of cached samples...");
-                    cache::sync_once(conn, &cfg, &auth_token_arc);
-                }
+                println!("[lib] 🔄 Final sync of cached samples...");
+                cache::sync_from_arc(&db_arc, &cfg, &auth_token_arc);
             }
         })
         .run(tauri::generate_context!())

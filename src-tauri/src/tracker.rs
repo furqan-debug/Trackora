@@ -303,13 +303,19 @@ pub fn start_sample_loop(
             let _ = app.emit("tracking-sample", &sample);
 
             // Cache first, then sync to Supabase
-            let db_guard = db.lock().unwrap();
-            if let Some(conn) = db_guard.as_ref() {
-                if let Err(e) = crate::cache::cache_sample(conn, &sample) {
-                    eprintln!("[tracker] cache write error: {}", e);
-                } else {
-                    crate::cache::sync_once(conn, &cfg, &auth_token);
+            let mut db_exists = false;
+            {
+                let db_guard = db.lock().unwrap();
+                if let Some(conn) = db_guard.as_ref() {
+                    db_exists = true;
+                    if let Err(e) = crate::cache::cache_sample(conn, &sample) {
+                        eprintln!("[tracker] cache write error: {}", e);
+                    }
                 }
+            } // Lock is dropped here
+
+            if db_exists {
+                crate::cache::sync_from_arc(&db, &cfg, &auth_token);
             } else {
                 // No DB — post the single sample directly to Supabase REST
                 let body = serde_json::json!([{
@@ -361,7 +367,10 @@ pub fn start_screenshot_loop(
             use base64::Engine;
             if let Ok(png_bytes) = base64::engine::general_purpose::STANDARD.decode(&base64_data) {
                 let s_token = auth_token.lock().unwrap().clone();
-                let mut req = ureq::post(&storage_url)
+                let agent = ureq::AgentBuilder::new()
+                    .timeout(std::time::Duration::from_secs(15))
+                    .build();
+                let mut req = agent.post(&storage_url)
                     .set("apikey", &cfg.anon_key)
                     .set("Content-Type", "image/png");
                 
@@ -424,7 +433,10 @@ pub fn start_screenshot_loop(
                         if let Ok(png_bytes) = base64::engine::general_purpose::STANDARD.decode(&base64_data) {
                             let s_token = auth_token.lock().unwrap().clone();
 
-                            let mut req = ureq::post(&storage_url)
+                            let agent = ureq::AgentBuilder::new()
+                                .timeout(std::time::Duration::from_secs(15))
+                                .build();
+                            let mut req = agent.post(&storage_url)
                                 .set("apikey", &cfg.anon_key)
                                 .set("Content-Type", "image/png");
                             

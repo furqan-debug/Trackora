@@ -206,3 +206,59 @@ pub fn sync_once(
         Err(e) => eprintln!("[cache] sync failed (will retry): {}", e),
     }
 }
+
+/// Safely syncs by dropping the DB mutex while performing the network request.
+/// This prevents blocking the main thread (or IPC thread queue) during long HTTP posts.
+pub fn sync_from_arc(
+    db_arc: &Arc<Mutex<Option<Connection>>>,
+    cfg: &SupabaseConfig,
+    auth_token: &Arc<Mutex<Option<String>>>,
+) {
+    let samples = {
+        let db_lock = db_arc.lock().unwrap();
+        if let Some(conn) = db_lock.as_ref() {
+            match get_unsynced_samples(conn) {
+                Ok(s) => s,
+                Err(e) => { eprintln!("[cache] get_unsynced error: {}", e); return; }
+            }
+        } else {
+            return;
+        }
+    }; // DB lock is explicitly DROPPED here before network call!
+
+    if samples.is_empty() { return; }
+
+    let token = auth_token.lock().unwrap().clone().unwrap_or_default();
+    
+    let payload: Vec<serde_json::Value> = samples.iter().map(|s| {
+        serde_json::json!({
+            "session_id":      s.session_id,
+            "recorded_at":     s.recorded_at,
+            "mouse_clicks":    s.mouse_clicks,
+            "key_presses":     s.key_presses,
+            "app_name":        s.app_name,
+            "window_title":    s.window_title,
+            "domain":          s.domain,
+            "idle":            s.idle,
+            "activity_percent": s.activity_percent,
+        })
+    }).collect();
+
+    let body = serde_json::json!(payload).to_string();
+
+    match crate::supabase_post(cfg, "activity_samples", &body, Some(&token), None) {
+        Ok(_) => {
+            let ids: Vec<i64> = samples.iter().map(|s| s.id).collect();
+            let db_lock = db_arc.lock().unwrap(); // RE-ACQUIRE lock just to mark synced
+            if let Some(conn) = db_lock.as_ref() {
+                if let Err(e) = mark_synced(conn, &ids) {
+                    eprintln!("[cache] mark_synced error: {}", e);
+                } else {
+                    println!("[cache] ✅ Synced {} samples to Supabase", ids.len());
+                }
+            }
+        }
+        Err(e) => eprintln!("[cache] sync failed (will retry): {}", e),
+    }
+}
+
