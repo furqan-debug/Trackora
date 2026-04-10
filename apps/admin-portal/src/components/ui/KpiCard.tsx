@@ -36,16 +36,20 @@ export function KpiCard({
             : 'bg-black/5 text-text-muted border-black/5';
 
     return (
-        <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-6 flex flex-col relative overflow-hidden group transition-all duration-300 hover:shadow-md">
+        <div className="bg-white border border-slate-100 shadow-sm rounded-[1.5rem] p-6 flex flex-col relative overflow-hidden group transition-all duration-500 hover:shadow-xl hover:-translate-y-1">
+            {/* Subtle premium glow effect behind icon */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl opacity-50 transition-opacity duration-500 group-hover:opacity-100 mix-blend-multiply" />
+            
             <div className="flex items-start justify-between mb-5 relative z-10">
-                <div className="w-12 h-12 rounded-xl bg-primary/5 border border-primary/10 flex items-center justify-center text-primary shrink-0 transition-all duration-300 group-hover:bg-primary/10">
+                <div className="w-12 h-12 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 shrink-0 transition-all duration-500 group-hover:bg-primary/10 group-hover:text-primary group-hover:border-primary/20 shadow-sm">
                     {icon}
                 </div>
                 {trend !== undefined && (
                     <span
                         className={clsx(
-                            'text-[10px] font-bold px-2 py-1 rounded-lg border transition-all duration-300 tracking-wider uppercase flex items-center gap-1',
-                            trendClass
+                            'text-[10px] font-bold px-2.5 py-1.5 rounded-xl border transition-all duration-500 tracking-wider uppercase flex items-center gap-1 shadow-sm',
+                            trendClass,
+                            'group-hover:scale-105'
                         )}
                     >
                         {isPositive ? '↑' : '↓'} {Math.abs(trend).toFixed(1)}%
@@ -53,16 +57,16 @@ export function KpiCard({
                 )}
             </div>
             
-            <div className="relative z-10">
-                <p className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-2">
+            <div className="relative z-10 mt-auto">
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
                     {label}
                 </p>
-                <h3 className="text-3xl font-bold text-text-primary tracking-tight">
+                <h3 className="text-3xl font-extrabold text-slate-800 tracking-tight leading-none group-hover:text-primary transition-colors duration-300">
                     {loading ? '—' : value}
                 </h3>
                 {sub && (
                     <div className="flex items-center gap-1.5 mt-3">
-                        <p className="text-[11px] font-medium text-text-muted">{sub}</p>
+                        <p className="text-[11px] font-semibold text-slate-400">{sub}</p>
                     </div>
                 )}
             </div>

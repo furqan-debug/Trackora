@@ -5,6 +5,7 @@ import {
     Camera, TrendingUp, BarChart3, Globe
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from 'recharts';
+import clsx from 'clsx';
 import { PageLayout, Card, KpiCard, EmptyState, LoadingState } from './ui';
 import { 
     getEffectiveEnd,
@@ -209,8 +210,8 @@ export function Dashboard() {
             title="Dashboard"
             description="Team performance, productivity metrics, and project distribution."
         >
-            <div className="flex flex-col gap-12">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-6">
+            <div className="flex flex-col gap-10">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-5">
                     <KpiCard icon={<Clock />} label="Today" value={loading ? '—' : formatDuration(stats.todayMinutes)} trend={stats.minutesTrend} />
                     <KpiCard icon={<BarChart3 />} label="Weekly Total" value={loading ? '—' : formatDuration(stats.weekMinutes)} trend={stats.minutesTrend} />
                     <KpiCard icon={<CircleDollarSign />} label="Weekly Cost" value={loading ? '—' : `$${stats.weekCost.toLocaleString()}`} trend={stats.costTrend} />
@@ -254,13 +255,15 @@ export function Dashboard() {
                                         <div key={p.id} className="group space-y-2">
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-3 min-w-0">
-                                                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
-                                                    <span className="text-sm font-500 text-text-primary truncate transition-colors group-hover:text-primary">{p.name}</span>
+                                                    <div className="w-3 h-3 rounded-full flex-shrink-0 shadow-sm" style={{ backgroundColor: p.color }} />
+                                                    <span className="text-sm font-semibold text-slate-800 truncate transition-colors group-hover:text-primary">{p.name}</span>
                                                 </div>
-                                                <span className="text-xs font-600 text-text-secondary ml-2">{p.percentage.toFixed(0)}%</span>
+                                                <span className="text-xs font-bold text-slate-500 ml-2">{p.percentage.toFixed(0)}%</span>
                                             </div>
-                                            <div className="h-2 bg-surface-subtle rounded-full overflow-hidden">
-                                                <div className="h-full rounded-full transition-all duration-700 ease-out" style={{ width: `${p.percentage}%`, backgroundColor: p.color }} />
+                                            <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden shadow-inner">
+                                                <div className="h-full rounded-full transition-all duration-700 ease-out relative" style={{ width: `${p.percentage}%`, backgroundImage: `linear-gradient(90deg, ${p.color}dd, ${p.color})` }}>
+                                                    <div className="absolute inset-0 bg-white/20" />
+                                                </div>
                                             </div>
                                         </div>
                                     ))
@@ -270,7 +273,7 @@ export function Dashboard() {
                     </div>
                 </div>
 
-                <Card title="Team Activity" subtitle="Current status and session details" noPadding className="overflow-hidden">
+                <Card title="Team Activity" subtitle="Current status and session details" noPadding className="overflow-hidden border-0 shadow-lg rounded-[1.5rem]">
                     <TeamActivityTable />
                 </Card>
             </div>
@@ -463,54 +466,75 @@ function TeamActivityTable() {
     if (!teamMembers.length) return <div className="p-32"><EmptyState icon={<Users />} title="No team members" description="Add members to see activity" /></div>;
 
     return (
-        <div className="w-full overflow-x-auto">
+        <div className="w-full overflow-x-auto bg-white rounded-b-[1.5rem]">
             <table className="w-full text-left border-collapse">
                 <thead>
-                    <tr className="bg-surface-subtle/40 border-b border-border">
-                        <th className="px-6 py-4 text-xs font-600 text-text-secondary uppercase tracking-wider">Member</th>
-                        <th className="px-6 py-4 text-xs font-600 text-text-secondary uppercase tracking-wider">Project</th>
-                        <th className="px-6 py-4 text-xs font-600 text-text-secondary uppercase tracking-wider text-right">Productive</th>
-                        <th className="px-6 py-4 text-xs font-600 text-text-secondary uppercase tracking-wider text-right">Idle</th>
-                        <th className="px-6 py-4 text-xs font-600 text-text-secondary uppercase tracking-wider text-right">Status</th>
+                    <tr className="bg-slate-50/80 border-y border-slate-100">
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest">Member</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest">Project</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Productive</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Idle</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Status</th>
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-border/40">
+                <tbody className="divide-y divide-slate-100/50">
                     {teamMembers.map(item => {
                         const { member: m, status } = item;
+                        
+                        // Explicit Tailwind classes to prevent PurgeCSS compilation issues
                         const statusConfig = {
-                            active: { color: 'emerald', label: 'Active' },
-                            idle: { color: 'amber', label: 'Idle' },
-                            offline: { color: 'gray', label: 'Offline' },
+                            active: {
+                                label: 'Active',
+                                bg: 'bg-emerald-500/10',
+                                border: 'border-emerald-500/20',
+                                text: 'text-emerald-700',
+                                dot: 'bg-emerald-500'
+                            },
+                            idle: {
+                                label: 'Idle',
+                                bg: 'bg-amber-500/10',
+                                border: 'border-amber-500/20',
+                                text: 'text-amber-700',
+                                dot: 'bg-amber-500'
+                            },
+                            offline: {
+                                label: 'Offline',
+                                bg: 'bg-slate-500/10',
+                                border: 'border-slate-500/20',
+                                text: 'text-slate-600',
+                                dot: 'bg-slate-400'
+                            },
                         };
+
                         const config = statusConfig[status];
 
                         return (
-                            <tr key={m.id} className="hover:bg-surface-subtle/30 transition-colors border-b border-border/40">
+                            <tr key={m.id} className="hover:bg-slate-50/50 transition-colors group">
                                 <td className="px-6 py-5">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-sm font-600 text-primary shrink-0">
+                                        <div className="w-10 h-10 rounded-xl bg-primary/5 border border-primary/10 flex items-center justify-center text-sm font-bold text-primary shrink-0 transition-transform duration-300 group-hover:scale-105">
                                             {m.full_name.charAt(0).toUpperCase()}
                                         </div>
                                         <div className="min-w-0">
-                                            <div className="font-500 text-text-primary truncate">{m.full_name}</div>
-                                            <div className="text-xs text-text-secondary">{m.timezone || 'UTC'}</div>
+                                            <div className="font-semibold text-slate-800 truncate">{m.full_name}</div>
+                                            <div className="text-[11px] font-medium text-slate-400 mt-0.5">{m.timezone || 'UTC'}</div>
                                         </div>
                                     </div>
                                 </td>
                                 <td className="px-6 py-5">
                                     {item.projectName ? (
-                                        <span className="inline-block px-3 py-1.5 bg-surface-subtle border border-border rounded-lg text-xs font-500 text-text-primary">
+                                        <span className="inline-block px-3 py-1.5 bg-slate-50 border border-slate-200/60 rounded-lg text-xs font-semibold text-slate-700 shadow-sm">
                                             {item.projectName}
                                         </span>
                                     ) : (
-                                        <span className="text-xs text-text-secondary italic opacity-50">—</span>
+                                        <span className="text-xs font-medium text-slate-400 italic opacity-60">—</span>
                                     )}
                                 </td>
-                                <td className="px-6 py-5 text-right font-600 text-text-primary">{formatDuration(item.productiveMinutes)}</td>
-                                <td className="px-6 py-5 text-right text-text-secondary">{formatDuration(item.idleMinutes)}</td>
+                                <td className="px-6 py-5 text-right font-bold text-slate-700">{formatDuration(item.productiveMinutes)}</td>
+                                <td className="px-6 py-5 text-right font-medium text-slate-500">{formatDuration(item.idleMinutes)}</td>
                                 <td className="px-6 py-5 text-right">
-                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-600 bg-emerald-500/10 border border-emerald-500/20 text-emerald-700`}>
-                                        <span className={`w-1.5 h-1.5 rounded-full bg-${config.color}-500`} />
+                                    <span className={clsx('inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold border tracking-wide uppercase shadow-sm transition-transform duration-300 group-hover:scale-105', config.bg, config.text, config.border)}>
+                                        <span className={clsx('w-1.5 h-1.5 rounded-full shadow-sm', config.dot)} />
                                         {config.label}
                                     </span>
                                 </td>

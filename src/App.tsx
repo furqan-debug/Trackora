@@ -165,7 +165,7 @@ function LocalClock() {
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
-    
+
     // Fetch location once
     fetch('https://ipapi.co/json/')
       .then(r => r.json())
@@ -232,7 +232,7 @@ function SettingsScreen({ user, onSave, onBack }: {
 
       setAvatarUrl(filePath);
     } catch (err: any) {
-      alert('Error uploading file: ' + err.message);
+      console.error('Upload failed:', err.message);
     } finally {
       setUploading(false);
     }
@@ -247,8 +247,11 @@ function SettingsScreen({ user, onSave, onBack }: {
   return (
     <div className="settings-screen">
       <header className="settings-header">
-        <button onClick={onBack} className="settings-back-btn"><ArrowLeft size={18} /></button>
-        <h2 className="heading-2">Profile Settings</h2>
+        <button onClick={onBack} className="settings-back-btn"><ArrowLeft size={16} /></button>
+        <div>
+          <h2 className="heading-2">Profile Settings</h2>
+          <p className="text-muted" style={{ fontSize: '0.6875rem', marginTop: '0.125rem' }}>Manage your account details</p>
+        </div>
       </header>
 
       <div className="settings-content">
@@ -266,7 +269,8 @@ function SettingsScreen({ user, onSave, onBack }: {
             </button>
             <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" style={{ display: 'none' }} />
           </div>
-          <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>Click to change profile photo</p>
+          <p style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', marginTop: '0.75rem' }}>{fullName || 'Your Name'}</p>
+          <p className="label" style={{ marginTop: '0.125rem' }}>{user.email}</p>
         </div>
 
         <div className="settings-form">
@@ -291,11 +295,11 @@ function SettingsScreen({ user, onSave, onBack }: {
             <div className="field-input-wrap disabled">
               <Mail size={14} className="field-icon" />
               <input type="email" value={user.email} disabled className="field-input" />
+              <span style={{ position: 'absolute', right: '0.75rem', fontSize: '0.625rem', fontWeight: 600, color: 'var(--success)', background: 'var(--success-bg)', padding: '0.125rem 0.4rem', borderRadius: '999px', letterSpacing: '0.03em' }}>VERIFIED</span>
             </div>
-            <p className="text-muted" style={{ fontSize: '0.6875rem', marginTop: '0.25rem' }}>Email cannot be changed from the desktop app.</p>
           </div>
 
-          <button onClick={save} disabled={isSaving || uploading} className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>
+          <button onClick={save} disabled={isSaving || uploading} className="btn btn-primary" style={{ width: '100%' }}>
             <Save size={16} />
             {isSaving ? 'Saving...' : 'Save Changes'}
           </button>
@@ -341,7 +345,7 @@ export default function App() {
   async function fetchDashboardStats(userId: string, currentProjects: Project[]) {
     try {
       const sb = await getSupabase();
-      
+
       const now = new Date();
       // Start of current week (local Monday)
       const day = now.getDay();
@@ -354,7 +358,7 @@ export default function App() {
         timeZone: user?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
         year: 'numeric', month: '2-digit', day: '2-digit'
       });
-      const todayStr = fmt.format(now); 
+      const todayStr = fmt.format(now);
 
       // 1. Fetch user's sessions for this week
       const { data: sessionData, error: sessionErr } = await sb
@@ -362,9 +366,9 @@ export default function App() {
         .select('id, project_id, started_at, ended_at')
         .eq('user_id', userId)
         .gte('started_at', weekStart.toISOString());
-        
+
       if (sessionErr) throw sessionErr;
-      
+
       const sessionMap = new Map<string, string>();
       const sessionIds: string[] = [];
       for (const s of (sessionData || [])) {
@@ -423,25 +427,25 @@ export default function App() {
 
       // Identify the latest active session (if any) to prevent ghost session duplication
       const activeSessions = (sessionData || []).filter((s: any) => !s.ended_at);
-      const latestActiveSessionId = activeSessions.length > 0 
+      const latestActiveSessionId = activeSessions.length > 0
         ? activeSessions.sort((a: any, b: any) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0].id
         : null;
 
       sessionData?.forEach((s: any) => {
-          const pId = s.project_id;
-          if (!statsMap[pId]) return;
+        const pId = s.project_id;
+        if (!statsMap[pId]) return;
 
-          // Only count the session if it's either ended OR it's the very latest active session
-          if (s.ended_at || s.id === latestActiveSessionId) {
-              const startedAt = new Date(s.started_at).getTime();
-              const endedAt = s.ended_at ? new Date(s.ended_at).getTime() : nowMs;
-              
-              if (endedAt > startOfToday.getTime()) {
-                  const effectiveStart = Math.max(startedAt, startOfToday.getTime());
-                  const durSeconds = Math.floor((endedAt - effectiveStart) / 1000);
-                  statsMap[pId].rawTodaySeconds += durSeconds;
-              }
+        // Only count the session if it's either ended OR it's the very latest active session
+        if (s.ended_at || s.id === latestActiveSessionId) {
+          const startedAt = new Date(s.started_at).getTime();
+          const endedAt = s.ended_at ? new Date(s.ended_at).getTime() : nowMs;
+
+          if (endedAt > startOfToday.getTime()) {
+            const effectiveStart = Math.max(startedAt, startOfToday.getTime());
+            const durSeconds = Math.floor((endedAt - effectiveStart) / 1000);
+            statsMap[pId].rawTodaySeconds += durSeconds;
           }
+        }
       });
 
 
@@ -463,67 +467,67 @@ export default function App() {
       // Group samples by project to calculate threshold-aware stats
       const samplesByProject = new Map<string, any[]>();
       dedupedSamples.forEach(s => {
-          const pid = s.sessions?.project_id;
-          if (!pid || !statsMap[pid]) return;
-          if (!samplesByProject.has(pid)) samplesByProject.set(pid, []);
-          samplesByProject.get(pid)!.push(s);
+        const pid = s.sessions?.project_id;
+        if (!pid || !statsMap[pid]) return;
+        if (!samplesByProject.has(pid)) samplesByProject.set(pid, []);
+        samplesByProject.get(pid)!.push(s);
       });
 
       samplesByProject.forEach((projectSamples, pid) => {
-          const sorted = projectSamples.sort((a, b) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime());
-          
-          let currentBlock: any[] = [];
-          const countedAsIdle = new Set<string>(); // minutes (recorded_at strings)
+        const sorted = projectSamples.sort((a, b) => new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime());
 
-          for (let i = 0; i < sorted.length; i++) {
-              const s = sorted[i];
-              const prev = i > 0 ? sorted[i-1] : null;
+        let currentBlock: any[] = [];
+        const countedAsIdle = new Set<string>(); // minutes (recorded_at strings)
 
-              const gapMs = prev ? (new Date(s.recorded_at).getTime() - new Date(prev.recorded_at).getTime()) : 0;
-              const isContiguous = prev && gapMs <= 125000;
+        for (let i = 0; i < sorted.length; i++) {
+          const s = sorted[i];
+          const prev = i > 0 ? sorted[i - 1] : null;
 
-              if (s.idle && isContiguous) {
-                  currentBlock.push(s);
-              } else if (s.idle && !prev) {
-                  currentBlock = [s];
-              } else if (s.idle && !isContiguous) {
-                  // End of a non-contiguous idle block
-                  if (currentBlock.length >= idleLimit) {
-                      currentBlock.forEach(b => countedAsIdle.add(b.recorded_at));
-                  }
-                  currentBlock = [s];
-              } else {
-                  // Non-idle sample encountered
-                  if (currentBlock.length >= idleLimit) {
-                      currentBlock.forEach(b => countedAsIdle.add(b.recorded_at));
-                  }
-                  currentBlock = [];
-              }
-          }
-          // Final block check
-          if (currentBlock.length >= idleLimit) {
+          const gapMs = prev ? (new Date(s.recorded_at).getTime() - new Date(prev.recorded_at).getTime()) : 0;
+          const isContiguous = prev && gapMs <= 125000;
+
+          if (s.idle && isContiguous) {
+            currentBlock.push(s);
+          } else if (s.idle && !prev) {
+            currentBlock = [s];
+          } else if (s.idle && !isContiguous) {
+            // End of a non-contiguous idle block
+            if (currentBlock.length >= idleLimit) {
               currentBlock.forEach(b => countedAsIdle.add(b.recorded_at));
+            }
+            currentBlock = [s];
+          } else {
+            // Non-idle sample encountered
+            if (currentBlock.length >= idleLimit) {
+              currentBlock.forEach(b => countedAsIdle.add(b.recorded_at));
+            }
+            currentBlock = [];
+          }
+        }
+        // Final block check
+        if (currentBlock.length >= idleLimit) {
+          currentBlock.forEach(b => countedAsIdle.add(b.recorded_at));
+        }
+
+        sorted.forEach(samp => {
+          const dateStr = fmt.format(new Date(samp.recorded_at));
+          const isIdle = countedAsIdle.has(samp.recorded_at);
+
+          // Every sample represents 1 minute (60s) of tracked time
+          statsMap[pid].weeklySeconds += 60;
+          if (isIdle) {
+            statsMap[pid].weeklyIdleSeconds += 60;
+          }
+          if (dateStr === todayStr) {
+            statsMap[pid].todaySeconds += 60;
+            if (isIdle) {
+              statsMap[pid].keptIdleSeconds += 60;
+            }
           }
 
-          sorted.forEach(samp => {
-              const dateStr = fmt.format(new Date(samp.recorded_at));
-              const isIdle = countedAsIdle.has(samp.recorded_at);
-
-              // Every sample represents 1 minute (60s) of tracked time
-              statsMap[pid].weeklySeconds += 60;
-              if (isIdle) {
-                  statsMap[pid].weeklyIdleSeconds += 60;
-              }
-              if (dateStr === todayStr) {
-                  statsMap[pid].todaySeconds += 60;
-                  if (isIdle) {
-                      statsMap[pid].keptIdleSeconds += 60;
-                  }
-              }
-
-              statsMap[pid].totalActivity += (samp.activity_percent ?? 0);
-              statsMap[pid].sampleCount++;
-          });
+          statsMap[pid].totalActivity += (samp.activity_percent ?? 0);
+          statsMap[pid].sampleCount++;
+        });
       });
 
       const updatedProjects = currentProjects.map(p => ({
@@ -534,8 +538,8 @@ export default function App() {
           weeklyIdleSeconds: statsMap[p.id].weeklyIdleSeconds,
           rawTodaySeconds: statsMap[p.id].rawTodaySeconds,
           keptIdleSeconds: statsMap[p.id].keptIdleSeconds,
-          activityPercent: statsMap[p.id].sampleCount > 0 
-            ? Math.round(statsMap[p.id].totalActivity / statsMap[p.id].sampleCount) 
+          activityPercent: statsMap[p.id].sampleCount > 0
+            ? Math.round(statsMap[p.id].totalActivity / statsMap[p.id].sampleCount)
             : 0
         } : { todaySeconds: 0, weeklySeconds: 0, weeklyIdleSeconds: 0, activityPercent: 0, rawTodaySeconds: 0, keptIdleSeconds: 0 }
       }));
@@ -558,11 +562,11 @@ export default function App() {
 
     const saved = loadSession();
     if (!saved) return;
-    
+
     getSupabase().then(async (sb: any) => {
       const { data: { session } } = await sb.auth.getSession();
       if (!session) { clearSession(); return; }
-      
+
       let { data: member } = await sb.from('members').select('*').eq('auth_user_id', session.user.id).single();
       if (!member && session.user.email) {
         const { data: byEmail } = await sb.from('members').select('*').eq('email', session.user.email).single();
@@ -571,15 +575,15 @@ export default function App() {
           member = { ...byEmail, auth_user_id: session.user.id };
         }
       }
-      
+
       if (member) {
         const tz = await syncTimezone(sb, member.id, member.timezone);
-        const userObj: User = { 
-          id: member.id, 
-          email: member.email, 
-          full_name: member.full_name, 
-          role: member.role, 
-          weekly_limit: member.weekly_limit, 
+        const userObj: User = {
+          id: member.id,
+          email: member.email,
+          full_name: member.full_name,
+          role: member.role,
+          weekly_limit: member.weekly_limit,
           daily_limit: member.daily_limit,
           idle_limit: member.idle_limit,
           idle_enabled: member.idle_enabled,
@@ -668,19 +672,19 @@ export default function App() {
   const discardIdleTime = async (minutes: number, shouldResume: boolean = true) => {
     if (!user || !sessionId) return;
     const sb = await getSupabase();
-    
+
     // 1. Delete samples from the last X minutes
     const startTime = new Date(Date.now() - (minutes * 60000)).toISOString();
     await sb.from('activity_samples')
       .delete()
       .eq('session_id', sessionId)
       .gte('recorded_at', startTime);
-      
+
     // 2. Adjust local timer and live idle counter
     const discardedSecs = minutes * 60;
     setElapsed(prev => Math.max(0, prev - discardedSecs));
     setLiveIdleSeconds(prev => Math.max(0, prev - discardedSecs));
-    
+
     if (shouldResume) {
       setIdlePaused(false);
       handleResume();
@@ -703,9 +707,9 @@ export default function App() {
   const reassignIdleTime = async (minutes: number, newProjectId: string) => {
     if (!user || !sessionId) return;
     const sb = await getSupabase();
-    
+
     const startTime = new Date(Date.now() - (minutes * 60000)).toISOString();
-    
+
     // Find or create a session for the target project
     const { data: existingSession } = await sb.from('sessions')
       .select('id')
@@ -715,7 +719,7 @@ export default function App() {
       .order('started_at', { ascending: false })
       .limit(1)
       .single();
-      
+
     let targetSessionId = existingSession?.id;
     if (!targetSessionId) {
       const { data: newSess } = await sb.from('sessions').insert({
@@ -725,14 +729,14 @@ export default function App() {
       }).select().single();
       targetSessionId = newSess?.id;
     }
-    
+
     if (targetSessionId) {
       await sb.from('activity_samples')
         .update({ session_id: targetSessionId })
         .eq('session_id', sessionId)
         .gte('recorded_at', startTime);
     }
-    
+
     // 2. Adjust local state
     setIdlePaused(false);
     handleResume();
@@ -755,32 +759,46 @@ export default function App() {
         const isIdleSample = sample.idle === true || (sample.activity_percent ?? 100) === 0;
         if (isIdleSample) {
           idleMinutesRef.current += 1;
-          setLiveIdleSeconds(prev => prev + 60); // track live idle for display
           const limit = user?.idle_limit || 10;
-          if (idleMinutesRef.current >= limit && !isPaused) {
-            const mode = user?.keep_idle_mode || 'prompt';
-            
-            // Retroactively mark those samples idle=true in DB so dashboard is accurate
-            markSamplesAsIdle(limit);
 
-            if (mode === 'always') {
-              idleMinutesRef.current = 0;
-              return;
+          // Only show as "Idle" in the UI if we've crossed the threshold
+          if (idleMinutesRef.current >= limit) {
+            if (idleMinutesRef.current === limit) {
+              // Just hit the threshold: add the accumulated backlog (e.g. 10 mins)
+              setLiveIdleSeconds(prev => prev + (limit * 60));
+            } else {
+              // Already past threshold: add this new idle minute
+              setLiveIdleSeconds(prev => prev + 60);
             }
 
-            if (mode === 'never') {
+            if (!isPaused) {
+              const mode = user?.keep_idle_mode || 'prompt';
+
+              // Retroactively mark those samples idle=true in DB so dashboard is accurate
+              markSamplesAsIdle(limit);
+
+              if (mode === 'always') {
+                // In always mode, we keep marking but don't pause/prompt.
+                // We reset the ref periodically or handle it differently?
+                // For now, reset to allow next threshold detection if they become active and idle again.
+                idleMinutesRef.current = 0;
+                return;
+              }
+
+              if (mode === 'never') {
+                handlePause();
+                discardIdleTime(limit, false);
+                idleMinutesRef.current = 0;
+                (trackerAPI as any).startIdleMonitoring(limit);
+                return;
+              }
+
+              // Default: 'prompt'
+              setIdlePaused(true);
               handlePause();
-              discardIdleTime(limit, false);
               idleMinutesRef.current = 0;
               (trackerAPI as any).startIdleMonitoring(limit);
-              return;
             }
-
-            // Default: 'prompt'
-            setIdlePaused(true);
-            handlePause();
-            idleMinutesRef.current = 0;
-            (trackerAPI as any).startIdleMonitoring(limit);
           }
         } else {
           idleMinutesRef.current = 0;
@@ -805,7 +823,7 @@ export default function App() {
         if (document.visibilityState === 'visible') {
           fetchDashboardStats(user.id, projects);
         }
-      }, 5 * 60_000); 
+      }, 5 * 60_000);
     }
     return () => { if (interval) clearInterval(interval); };
   }, [user?.id, screen, projects]);
@@ -877,7 +895,7 @@ export default function App() {
           (payload: any) => {
             const updated = payload.new;
             console.log('Member profile updated (real-time):', updated);
-            
+
             // Update local state
             setUser(prev => prev ? { ...prev, ...updated } : null);
 
@@ -920,10 +938,10 @@ export default function App() {
         return s + pWeekly;
       }, 0);
       const currentWeek = initialWeek + elapsed;
-      
+
       const weeklyLimitSecs = (user.weekly_limit || 40) * 3600;
       const dailyLimitSecs = (user.daily_limit || 8) * 3600;
-      
+
       if (currentToday >= dailyLimitSecs || currentWeek >= weeklyLimitSecs) {
         trackerAPI.showNotification('Tracking Limit Reached', 'Your session has been automatically stopped because you reached your daily or weekly time limit.');
         handleStop();
@@ -942,7 +960,7 @@ export default function App() {
 
       let { data: member, error: memberError } = await sb
         .from('members').select('*').eq('auth_user_id', authData.user.id).single();
-      
+
       // Fallback: lookup by email if auth_user_id is not yet linked
       if ((memberError || !member) && authData.user.email) {
         const { data: byEmail } = await sb.from('members').select('*').eq('email', authData.user.email).single();
@@ -958,12 +976,12 @@ export default function App() {
       if (memberError || !member) return 'User profile not found in your organization.';
 
       const tz = await syncTimezone(sb, member.id, member.timezone);
-      const userObj: User = { 
-        id: member.id, 
-        email: member.email, 
-        full_name: member.full_name, 
-        role: member.role, 
-        weekly_limit: member.weekly_limit, 
+      const userObj: User = {
+        id: member.id,
+        email: member.email,
+        full_name: member.full_name,
+        role: member.role,
+        weekly_limit: member.weekly_limit,
         daily_limit: member.daily_limit,
         idle_limit: member.idle_limit,
         idle_enabled: member.idle_enabled,
@@ -1061,7 +1079,7 @@ export default function App() {
     } catch (err) {
       console.error('[App] stopTracking FAILED:', err);
     }
-    
+
     setIsTracking(false);
     setIsPaused(false);
     setSessionId(null);
@@ -1120,8 +1138,8 @@ export default function App() {
 
   const pageVariants = {
     initial: { opacity: 0, y: 8 },
-    in:      { opacity: 1, y: 0 },
-    out:     { opacity: 0, y: -8 }
+    in: { opacity: 1, y: 0 },
+    out: { opacity: 0, y: -8 }
   };
   const pageTransition: any = { type: 'tween', ease: 'easeInOut', duration: 0.2 };
 
@@ -1170,20 +1188,20 @@ export default function App() {
         )}
         {screen === 'tracker' && (
           <motion.div key="tracker" initial="initial" animate="in" exit="out" variants={pageVariants} transition={pageTransition} style={{ display: 'flex', flex: 1, flexDirection: 'column' }}>
-            <TrackerScreen 
-              user={user!} 
-              project={activeProject!} 
-              sessionId={sessionId} 
-              isPaused={isPaused} 
+            <TrackerScreen
+              user={user!}
+              project={activeProject!}
+              sessionId={sessionId}
+              isPaused={isPaused}
               idlePaused={idlePaused}
               onResumeFromIdle={() => { setIdlePaused(false); (trackerAPI as any).stopIdleMonitoring(); handleResume(); }}
-              elapsed={elapsed} 
+              elapsed={elapsed}
               liveIdleSeconds={liveIdleSeconds}
-              onStop={handleStop} 
-              onPause={handlePause} 
-              onResume={handleResume} 
-              onSettings={() => setScreen('settings')} 
-              todos={todos} 
+              onStop={handleStop}
+              onPause={handlePause}
+              onResume={handleResume}
+              onSettings={() => setScreen('settings')}
+              todos={todos}
               onTodoDone={handleTodoDone}
               projects={projects}
             />
@@ -1484,10 +1502,10 @@ function ProjectsScreen({ user, projects, onSelect, onLogout, onSettings, tracki
   onTodoDone: (id: string) => void;
 }) {
   // Productive = total tracked - idle
-  const totalToday   = projects.reduce((s, p) => s + Math.max(0, (p.stats?.todaySeconds || 0) - (p.stats?.keptIdleSeconds || 0)), 0);
-  const totalWeek    = projects.reduce((s, p) => s + Math.max(0, (p.stats?.weeklySeconds || 0) - (p.stats?.weeklyIdleSeconds || 0)), 0);
-  const tracked      = projects.filter(p => (p.stats?.weeklySeconds || 0) > 0);
-  const avgActivity  = tracked.length > 0
+  const totalToday = projects.reduce((s, p) => s + Math.max(0, (p.stats?.todaySeconds || 0) - (p.stats?.keptIdleSeconds || 0)), 0);
+  const totalWeek = projects.reduce((s, p) => s + Math.max(0, (p.stats?.weeklySeconds || 0) - (p.stats?.weeklyIdleSeconds || 0)), 0);
+  const tracked = projects.filter(p => (p.stats?.weeklySeconds || 0) > 0);
+  const avgActivity = tracked.length > 0
     ? Math.round(tracked.reduce((s, p) => s + (p.stats?.activityPercent || 0), 0) / tracked.length)
     : 0;
 
@@ -1499,7 +1517,7 @@ function ProjectsScreen({ user, projects, onSelect, onLogout, onSettings, tracki
 
   const itemVariants = {
     hidden: { opacity: 0, y: 10 },
-    show:   { opacity: 1,  y: 0 },
+    show: { opacity: 1, y: 0 },
   };
 
   return (
@@ -1626,10 +1644,10 @@ function ConsentScreen({ project, onAccept, onDecline }: {
           </div>
 
           <div className="consent-body">
-            <ConsentItem icon={<Eye size={16} />}      title="Screenshots"        desc="Up to 3 random captures every 10 min to verify work." />
+            <ConsentItem icon={<Eye size={16} />} title="Screenshots" desc="Up to 3 random captures every 10 min to verify work." />
             <ConsentItem icon={<MonitorPlay size={16} />} title="Active Application" desc="Names of active windows (e.g. Chrome, VS Code)." />
-            <ConsentItem icon={<MousePointerClick size={16} />} title="Activity Counts"    desc="Mouse clicks and keystrokes count (not content)." />
-            <ConsentItem icon={<MapPin size={16} />}   title="General Location"   desc="IP-based location for security auditing." />
+            <ConsentItem icon={<MousePointerClick size={16} />} title="Activity Counts" desc="Mouse clicks and keystrokes count (not content)." />
+            <ConsentItem icon={<MapPin size={16} />} title="General Location" desc="IP-based location for security auditing." />
             <div className="consent-note">
               Data is encrypted and only visible to your organization's admins. You can stop at any time.
             </div>
@@ -1682,10 +1700,10 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
   projects: Project[];
 }) {
   const [showReassign, setShowReassign] = useState(false);
-  const hrs  = Math.floor(elapsed / 3600);
+  const hrs = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);
   const secs = elapsed % 60;
-  const fmt  = (n: number) => String(n).padStart(2, '0');
+  const fmt = (n: number) => String(n).padStart(2, '0');
 
   const baseKeptIdle = project.stats?.keptIdleSeconds || 0;
 
@@ -1718,7 +1736,7 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
                   <p className="text-muted" style={{ marginBottom: '1.25rem', fontSize: '0.75rem', lineHeight: 1.4 }}>
                     We detected {user.idle_limit || 10} minutes of inactivity. What should we do with this time?
                   </p>
-                  
+
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.625rem', width: '100%', marginBottom: '0.625rem' }}>
                     <button className="btn btn-primary" onClick={onResumeFromIdle} style={{ fontSize: '0.6875rem', padding: '0.625rem 0.25rem' }}>
                       Keep Time
@@ -1741,7 +1759,7 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
                   <h3 className="heading-3" style={{ margin: '0 0 0.75rem 0' }}>Reassign Time</h3>
                   <div className="project-list" style={{ width: '100%', maxHeight: '160px', overflowY: 'auto', marginBottom: '1rem' }}>
                     {projects.map((p: Project) => (
-                      <div key={p.id} className="project-card" 
+                      <div key={p.id} className="project-card"
                         onClick={() => {
                           (window as any).reassignIdleTime?.((user.idle_limit || 10), p.id);
                           setShowReassign(false);
@@ -1779,17 +1797,17 @@ function TrackerScreen({ user, project, isPaused = false, idlePaused = false, on
           </p>
 
           <div style={{ marginTop: '1rem', padding: '0.625rem 0.875rem', background: 'var(--bg-secondary)', borderRadius: '0.75rem', fontSize: '0.8125rem', display: 'grid', gridTemplateColumns: 'min-content 1fr min-content', gap: '0.5rem 0.75rem', textAlign: 'left', minWidth: '240px', margin: '0 auto 1.5rem auto', border: '1px solid var(--border-light)' }}>
-              <div style={{ color: 'var(--primary)', alignSelf: 'center' }}><Clock size={14}/></div>
-              <div style={{ color: 'var(--text-secondary)' }}>Productive Time</div>
-              <div style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
-                  {fmt(Math.floor(displayProductive / 3600))}:{fmt(Math.floor((displayProductive % 3600) / 60))}
-              </div>
-              
-              <div style={{ color: 'var(--amber)', alignSelf: 'center' }}><Activity size={14} /></div>
-              <div style={{ color: 'var(--text-secondary)' }}>Idle Time</div>
-              <div style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
-                  {fmt(Math.floor(displayIdle / 3600))}:{fmt(Math.floor((displayIdle % 3600) / 60))}
-              </div>
+            <div style={{ color: 'var(--primary)', alignSelf: 'center' }}><Clock size={14} /></div>
+            <div style={{ color: 'var(--text-secondary)' }}>Productive Time</div>
+            <div style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
+              {fmt(Math.floor(displayProductive / 3600))}:{fmt(Math.floor((displayProductive % 3600) / 60))}
+            </div>
+
+            <div style={{ color: 'var(--amber)', alignSelf: 'center' }}><Activity size={14} /></div>
+            <div style={{ color: 'var(--text-secondary)' }}>Idle Time</div>
+            <div style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
+              {fmt(Math.floor(displayIdle / 3600))}:{fmt(Math.floor((displayIdle % 3600) / 60))}
+            </div>
           </div>
 
           <div className="tracker-controls">
