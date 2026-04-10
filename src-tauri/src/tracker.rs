@@ -268,8 +268,6 @@ pub fn start_sample_loop(
 ) {
     thread::spawn(move || {
         loop {
-            thread::sleep(Duration::from_millis(interval_ms));
-
             if !*running.lock().unwrap() { break; }
 
             let (mouse, keyboard) = {
@@ -328,6 +326,7 @@ pub fn start_sample_loop(
                 let token = auth_token.lock().unwrap().clone();
                 let _ = crate::supabase_post(&cfg, "activity_samples", &body, token.as_deref(), None);
             }
+            thread::sleep(Duration::from_millis(interval_ms));
         }
     });
 }

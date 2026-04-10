@@ -284,19 +284,29 @@ fn start_tracking(
 /// invoke('stop_tracking')
 #[tauri::command]
 fn stop_tracking(state: tauri::State<'_, Mutex<AppState>>) -> TrackingResult {
-    let (cfg, token, session_id, running) = {
+    let (cfg, auth_arc, session_id, running, db_arc) = {
         let mut s = state.lock().unwrap();
-        let token = s.auth_token.lock().unwrap().clone();
-        let cfg = SupabaseConfig { 
-            url: s.supabase_url.clone(), 
-            anon_key: s.supabase_anon_key.clone() 
-        };
-        (cfg, token, s.active_session_id.take(), Arc::clone(&s.tracking_running))
+        (
+            SupabaseConfig { url: s.supabase_url.clone(), anon_key: s.supabase_anon_key.clone() },
+            Arc::clone(&s.auth_token),
+            s.active_session_id.take(),
+            Arc::clone(&s.tracking_running),
+            Arc::clone(&s.db),
+        )
     };
 
     *running.lock().unwrap() = false;
 
+    // Final sync from cache to Supabase
+    {
+        let db_lock = db_arc.lock().unwrap();
+        if let Some(conn) = db_lock.as_ref() {
+            cache::sync_once(conn, &cfg, &auth_arc);
+        }
+    }
+
     if let Some(sid) = session_id {
+        let token = auth_arc.lock().unwrap().clone();
         let ended = chrono::Utc::now().to_rfc3339();
         let body = serde_json::json!({ "ended_at": ended }).to_string();
         let _ = supabase_patch(&cfg, "sessions", &format!("id=eq.{}", sid), &body, token.as_deref());
