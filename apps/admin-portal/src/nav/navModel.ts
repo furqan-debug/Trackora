@@ -6,9 +6,9 @@ import {
     FolderKanban,
     FileText,
     Users,
-    CircleDollarSign,
-    AppWindow,
     Settings,
+    BarChart3,
+    Calendar as CalendarIcon
 } from 'lucide-react';
 
 export type BadgeType = 'new' | 'bolt' | null;
@@ -31,22 +31,30 @@ export interface NavGroup {
 }
 
 export const navStructure: NavGroup[] = [
-    { name: 'Home', icon: LayoutDashboard, path: '/dashboard' },
+    { name: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
     {
         name: 'Timesheets',
         icon: Clock,
+        path: '/dashboard/timesheets',
         children: [
-            { name: 'View / Edit time', path: '/dashboard/timesheets' },
-            { name: 'Approve time', path: '/dashboard/timesheets/approvals', badge: 'bolt', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
+            { name: 'View Timesheets', path: '/dashboard/timesheets' },
+            { name: 'Approvals', path: '/dashboard/timesheets/approvals', badge: 'bolt', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
         ],
     },
     {
         name: 'Activity',
         icon: Activity,
         children: [
-            { name: 'Screen captures', path: '/dashboard/activity' },
-            { name: 'Applications used', path: '/dashboard/activity/apps' },
-            { name: 'Websites visited', path: '/dashboard/url-tracking' },
+            { name: 'Screenshots', path: '/dashboard/activity' },
+            { name: 'Apps & URLs', path: '/dashboard/activity/apps' },
+        ],
+    },
+    {
+        name: 'Insights',
+        icon: BarChart3,
+        children: [
+            { name: 'Performance', path: '/dashboard/insights/performance' },
+            { name: 'Highlights', path: '/dashboard/insights/highlights' },
         ],
     },
     {
@@ -54,22 +62,18 @@ export const navStructure: NavGroup[] = [
         icon: FolderKanban,
         allowedRoles: ['Admin', 'Manager', 'User', 'Viewer'],
         children: [
-            { name: 'All projects', path: '/dashboard/projects' },
-            { name: 'Tasks / To-do list', path: '/dashboard/projects/todos' },
+            { name: 'Projects', path: '/dashboard/projects' },
+            { name: 'Tasks', path: '/dashboard/projects/todos' },
             { name: 'Clients', path: '/dashboard/projects/clients', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
         ],
     },
+    { name: 'Calendar', icon: CalendarIcon, path: '/dashboard/calendar' },
     {
         name: 'Reports',
         icon: FileText,
         children: [
-            { name: 'Time usage report', path: '/dashboard/reports', badge: 'new' },
-            { name: 'Old time report', path: '/dashboard/reports/legacy', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
-            { name: 'Weekly summary', path: '/dashboard/reports/daily' },
-            { name: 'Payments due', path: '/dashboard/reports/owed', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
-            { name: 'Payment history', path: '/dashboard/reports/payments', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
-            { name: 'Reports (coming soon)', path: '/dashboard/reports/all', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
-            { name: 'Create report', path: '/dashboard/reports/custom', badge: 'bolt', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
+            { name: 'Time Usage', path: '/dashboard/reports' },
+            { name: 'Weekly Summary', path: '/dashboard/reports/daily' },
         ],
     },
     {
@@ -77,35 +81,16 @@ export const navStructure: NavGroup[] = [
         icon: Users,
         allowedRoles: ['Admin', 'Manager', 'Viewer'],
         children: [
-            { name: 'Team members', path: '/dashboard/people', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
-            { name: 'Groups', path: '/dashboard/people/teams', badge: 'bolt' },
+            { name: 'Members', path: '/dashboard/people' },
+            { name: 'Teams', path: '/dashboard/people/teams' },
         ],
-    },
-    {
-        name: 'Financials (WIP)',
-        icon: CircleDollarSign,
-        allowedRoles: ['Admin', 'Manager', 'Viewer'],
-        children: [
-            { name: 'Manage payroll (WIP)', path: '/dashboard/financials', badge: 'bolt' },
-            { name: 'Create payments (WIP)', path: '/dashboard/financials/create' },
-            { name: 'Past payments (WIP)', path: '/dashboard/financials/past' },
-            { name: 'Invoices (WIP)', path: '/dashboard/financials/invoices' },
-            { name: 'Expenses (WIP)', path: '/dashboard/financials/expenses' },
-        ],
-    },
-    {
-        name: 'Silent app',
-        icon: AppWindow,
-        allowedRoles: ['Admin', 'Manager', 'Viewer'],
-        children: [{ name: 'How it works', path: '/dashboard/silent/how-it-works' }],
     },
     {
         name: 'Settings',
         icon: Settings,
         children: [
-            { name: 'All settings', path: '/dashboard/settings', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
-            { name: 'Activity & tracking', path: '/dashboard/settings/tracking', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
-            { name: 'Billing', path: '/dashboard/settings/billing', allowedRoles: ['Admin', 'Manager', 'Viewer'] },
+            { name: 'Org Settings', path: '/dashboard/settings' },
+            { name: 'Tracking', path: '/dashboard/settings/tracking' },
         ],
     },
 ];
